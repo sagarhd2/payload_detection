@@ -1,0 +1,7 @@
+{
+  "name": "AegisSQL - AI Injection Defense & Daily Learning Agent",
+  "description": "Full-stack SQL injection detection portal and autonomous security agent that warns users in real-time and continuously trains daily on real-world threat telemetry.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
