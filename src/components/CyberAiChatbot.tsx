@@ -82,7 +82,7 @@ const ROLE_CONFIGS: Record<
 };
 
 export const CyberAiChatbot: React.FC<CyberAiChatbotProps> = ({ isOpen, onClose }) => {
-  const [selectedModel, setSelectedModel] = useState<GeminiModel>('gemini-3.8-flash');
+  const [selectedModel, setSelectedModel] = useState<GeminiModel>('gemini-3.1-flash-lite');
   const [selectedRole, setSelectedRole] = useState<ChatRole>('red_team');
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
@@ -94,7 +94,7 @@ export const CyberAiChatbot: React.FC<CyberAiChatbotProps> = ({ isOpen, onClose 
 Greetings, Operator. I am your multi-turn **Gemini-powered Security Assistant**.
 
 **Current Active Profile:** Red Team Offensive Security Architect  
-**Active Model Engine:** \`gemini-3.8-flash\` (Balanced General)
+**Active Model Engine:** \`gemini-3.1-flash-lite\` (Ultra-Fast Response)
 
 You can ask me to:
 1. Deconstruct complex SQL injection payloads (e.g. \`ORDER BY 1\`, \`' UNION SELECT...\`, \`SLEEP(5)\`)
@@ -103,7 +103,7 @@ You can ask me to:
 
 Switch personas or models above to adapt my analysis depth!`,
       timestamp: new Date().toLocaleTimeString(),
-      modelUsed: 'gemini-3.8-flash',
+      modelUsed: 'gemini-3.1-flash-lite',
     },
   ]);
 

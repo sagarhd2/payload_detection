@@ -8,6 +8,7 @@ import { SecurityIncidentLogs } from './components/SecurityIncidentLogs';
 import { CyberAiChatbot } from './components/CyberAiChatbot';
 import { PortScanner } from './components/PortScanner';
 import { PresentationDeck } from './components/PresentationDeck';
+import { StartingLandingPage } from './components/StartingLandingPage';
 import { Bot, Sparkles } from 'lucide-react';
 import { AgentStatus, TrainingRun, ThreatFeedItem, IncidentLog } from './types';
 
@@ -64,6 +65,7 @@ export default function App() {
   const [isChatOpen, setIsChatOpen] = useState<boolean>(false);
   const [isPortScannerOpen, setIsPortScannerOpen] = useState<boolean>(false);
   const [isPresentationOpen, setIsPresentationOpen] = useState<boolean>(false);
+  const [hasStarted, setHasStarted] = useState<boolean>(false);
 
   const refreshAllData = async () => {
     try {
@@ -120,7 +122,43 @@ export default function App() {
   const handleTestInSandbox = (payload: string) => {
     setSandboxPayload(payload);
     setActiveTab('sandbox');
+    setHasStarted(true);
   };
+
+  if (!hasStarted) {
+    return (
+      <>
+        <StartingLandingPage
+          status={status}
+          onGetStarted={(targetTab) => {
+            if (targetTab) setActiveTab(targetTab);
+            setHasStarted(true);
+          }}
+          onOpenPortScanner={() => setIsPortScannerOpen(true)}
+          onOpenChat={() => setIsChatOpen(true)}
+          onOpenPresentation={() => setIsPresentationOpen(true)}
+        />
+
+        {/* Project PPT Presentation Modal */}
+        <PresentationDeck
+          isOpen={isPresentationOpen}
+          onClose={() => setIsPresentationOpen(false)}
+        />
+
+        {/* Nmap-Style Network Port Scanner Modal */}
+        <PortScanner
+          isOpen={isPortScannerOpen}
+          onClose={() => setIsPortScannerOpen(false)}
+        />
+
+        {/* AI Security Analyst Chatbot Modal */}
+        <CyberAiChatbot
+          isOpen={isChatOpen}
+          onClose={() => setIsChatOpen(false)}
+        />
+      </>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#030712] cyber-grid text-slate-100 flex flex-col font-mono selection:bg-cyan-500/30 selection:text-cyan-200">
@@ -132,6 +170,7 @@ export default function App() {
         onOpenChat={() => setIsChatOpen(true)}
         onOpenPortScanner={() => setIsPortScannerOpen(true)}
         onOpenPresentation={() => setIsPresentationOpen(true)}
+        onBackToLanding={() => setHasStarted(false)}
       />
 
       {/* Floating Gemini AI Chat Action Button */}
@@ -152,7 +191,7 @@ export default function App() {
             <span>Ask Security AI</span>
             <Sparkles className="w-3 h-3 text-cyan-200" />
           </span>
-          <span className="text-[10px] text-cyan-200/80 font-normal">Gemini 3.8 Flash</span>
+          <span className="text-[10px] text-cyan-200/80 font-normal">Multi-Turn Active</span>
         </div>
       </button>
 
