@@ -17,6 +17,7 @@ interface NavbarProps {
   incidentCount: number;
   onOpenChat: () => void;
   onOpenPortScanner: () => void;
+  onOpenPresentation?: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -26,6 +27,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   incidentCount,
   onOpenChat,
   onOpenPortScanner,
+  onOpenPresentation,
 }) => {
   return (
     <header className="border-b border-cyan-900/60 bg-[#040a18]/90 backdrop-blur sticky top-0 z-50">
@@ -46,7 +48,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                   AegisSQL Sentinel
                 </span>
                 <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-cyan-950 text-cyan-300 border border-cyan-700 font-bold uppercase tracking-widest">
-                  {status ? status.modelVersion : 'v3.8.4-adaptive'}
+                  {status ? status.modelVersion : 'v3.8.5-adaptive'}
                 </span>
               </div>
               <p className="text-[11px] font-mono text-cyan-300/70 hidden sm:flex items-center gap-1">
@@ -56,12 +58,18 @@ export const Navbar: React.FC<NavbarProps> = ({
           </div>
 
           {/* Top Right Controls (Navy + Cyan) */}
-          <div className="flex items-center gap-2.5 font-mono">
-            {/* Real-Time Sensor Telemetry Status */}
-            <div className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#081735] border border-cyan-800/80 text-cyan-300 text-xs font-bold shadow-sm shadow-cyan-950">
-              <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse"></span>
-              <span>SENSORS: SYNCHRONIZED</span>
-            </div>
+          <div className="flex items-center gap-2 font-mono">
+            {/* Project Slides PPT Trigger */}
+            {onOpenPresentation && (
+              <button
+                onClick={onOpenPresentation}
+                className="hidden lg:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#091a3c] hover:bg-cyan-950 text-cyan-200 hover:text-white border border-cyan-700/60 text-xs font-bold transition-all shadow-md shadow-cyan-950/50 cursor-pointer"
+                title="View Architecture & Training Slides Presentation"
+              >
+                <BookOpen className="w-3.5 h-3.5 text-cyan-400" />
+                <span>Slides (PPT)</span>
+              </button>
+            )}
 
             {/* Nmap-Style Port Scanner Trigger */}
             <button
@@ -70,15 +78,15 @@ export const Navbar: React.FC<NavbarProps> = ({
               title="Launch Nmap-Style Port & Version Scanner"
             >
               <Server className="w-3.5 h-3.5 text-cyan-300" />
-              <span className="hidden md:inline">Port Scanner (Nmap)</span>
-              <span className="md:hidden">Port Scan</span>
+              <span className="hidden sm:inline">Port Scanner (Nmap)</span>
+              <span className="sm:hidden">Nmap</span>
             </button>
 
-            {/* AI Security Analyst Chatbot Trigger */}
+            {/* AI Security Analyst Chatbot Trigger (Gemini Multi-Turn) */}
             <button
               onClick={onOpenChat}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-cyan-600 via-blue-600 to-indigo-600 hover:from-cyan-500 hover:to-blue-500 text-white border border-cyan-400/60 text-xs font-bold transition-all shadow-lg shadow-cyan-600/30 cursor-pointer"
-              title="Open Gemini AI Security Chatbot"
+              className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-cyan-600 via-blue-600 to-indigo-600 hover:from-cyan-500 hover:to-blue-500 text-white border border-cyan-400/80 text-xs font-bold transition-all shadow-lg shadow-cyan-600/40 cursor-pointer ring-1 ring-cyan-400/50 animate-pulse hover:animate-none"
+              title="Open Gemini Multi-Turn Security Chatbot"
             >
               <MessageSquare className="w-3.5 h-3.5 text-cyan-100" />
               <span>Ask Security AI</span>

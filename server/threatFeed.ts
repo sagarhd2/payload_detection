@@ -2,6 +2,28 @@ import { ThreatFeedItem } from '../src/types';
 
 export const INITIAL_REAL_WORLD_FEEDS: ThreatFeedItem[] = [
   {
+    id: 'tf-2026-1051',
+    cveId: 'CVE-2025-41288',
+    source: 'OWASP_HONEYPOT',
+    timestamp: '2026-11-06T18:12:00Z',
+    targetSoftware: 'SaaS IAM Authentication Gateway',
+    severity: 'HIGH',
+    payloadSample: "admin' ORDER BY 1--",
+    description: 'Column enumeration probe using ORDER BY 1..n to map backend query layout prior to UNION projection.',
+    defenseStatus: 'INGESTED_AND_TRAINED'
+  },
+  {
+    id: 'tf-2026-1050',
+    cveId: 'CVE-2025-39902',
+    source: 'NVD_CVE_FEED',
+    timestamp: '2026-11-05T22:30:15Z',
+    targetSoftware: 'Enterprise Financial Portal',
+    severity: 'CRITICAL',
+    payloadSample: "and (select substring(@@version,1,1))='X'",
+    description: 'Boolean-based blind inference exfiltrating database system version byte-by-byte using substring and @@version.',
+    defenseStatus: 'INGESTED_AND_TRAINED'
+  },
+  {
     id: 'tf-2026-1049',
     cveId: 'CVE-2025-34912',
     source: 'OWASP_HONEYPOT',

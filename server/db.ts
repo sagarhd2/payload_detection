@@ -4,16 +4,16 @@ import { INITIAL_REAL_WORLD_FEEDS } from './threatFeed';
 class AgentDatabase {
   private status: AgentStatus = {
     online: true,
-    agentName: 'AegisSQL Sentinel v3.8.4',
-    modelVersion: 'v3.8.4-adaptive',
-    lastTrainedTime: new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString(),
-    nextScheduledTraining: new Date(Date.now() + 20 * 60 * 60 * 1000).toISOString(),
+    agentName: 'AegisSQL Sentinel v3.8.5',
+    modelVersion: 'v3.8.5-adaptive',
+    lastTrainedTime: new Date(Date.now() - 15 * 60 * 1000).toISOString(),
+    nextScheduledTraining: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
     trainingCronInterval: 'Every 24 Hours (00:00 UTC)',
-    activeSignaturesCount: 2548,
-    totalPayloadsScreened: 14820,
-    totalThreatsBlocked: 412,
-    accuracyRate: 99.82,
-    falsePositiveRate: 0.02,
+    activeSignaturesCount: 2600,
+    totalPayloadsScreened: 15420,
+    totalThreatsBlocked: 448,
+    accuracyRate: 99.89,
+    falsePositiveRate: 0.015,
     geminiAiEnabled: Boolean(process.env.GEMINI_API_KEY),
     learningMode: 'CONTINUOUS_AUTONOMOUS',
   };
@@ -34,7 +34,7 @@ class AgentDatabase {
     },
     {
       id: 'train-run-105',
-      timestamp: new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString(),
+      timestamp: new Date(Date.now() - 8 * 60 * 60 * 1000).toISOString(),
       modelPreviousVersion: 'v3.8.3-adaptive',
       modelNewVersion: 'v3.8.4-adaptive',
       sourcesProcessed: ['OWASP_HONEYPOT', 'NVD_CVE_FEED', 'GITHUB_ADVISORY'],
@@ -43,6 +43,19 @@ class AgentDatabase {
       accuracyBefore: 99.78,
       accuracyAfter: 99.82,
       summary: 'Processed daily CVE feeds and GitHub security advisories. Hardened detection against nested sleep injections and JSON query tampering.',
+      status: 'COMPLETED'
+    },
+    {
+      id: 'train-run-106',
+      timestamp: new Date(Date.now() - 15 * 60 * 1000).toISOString(),
+      modelPreviousVersion: 'v3.8.4-adaptive',
+      modelNewVersion: 'v3.8.5-adaptive',
+      sourcesProcessed: ['OWASP_HONEYPOT', 'NVD_CVE_FEED', 'MODSECURITY_CRS'],
+      logsAnalyzedCount: 6340,
+      newPatternsLearned: 52,
+      accuracyBefore: 99.82,
+      accuracyAfter: 99.89,
+      summary: 'Trained model on ORDER BY column enumeration vectors and Boolean-based blind subquery extraction (@@version, substring). Synthesized 52 new AST tokenizers.',
       status: 'COMPLETED'
     }
   ];

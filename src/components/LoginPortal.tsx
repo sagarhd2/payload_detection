@@ -469,6 +469,26 @@ db.execute(query, [username, password]);`}
                     Appends a semicolon delimiter to execute destructive second-order commands like table drops or user creation.
                   </p>
                 </div>
+
+                <div className="bg-[#030816] p-2.5 rounded-xl border border-cyan-950">
+                  <div className="flex items-center justify-between text-[11px] mb-0.5">
+                    <span className="font-bold text-white">5. ORDER BY Column Enumeration</span>
+                    <span className="text-cyan-400 font-bold">ORDER BY 1 / ORDER BY 2</span>
+                  </div>
+                  <p className="text-[11px] text-slate-400">
+                    Incrementally tests column indexes (<code className="text-cyan-300">ORDER BY 1</code>, <code className="text-cyan-300">ORDER BY 2</code>) to map table layout before launching UNION SELECT queries.
+                  </p>
+                </div>
+
+                <div className="bg-[#030816] p-2.5 rounded-xl border border-cyan-950">
+                  <div className="flex items-center justify-between text-[11px] mb-0.5">
+                    <span className="font-bold text-white">6. Blind Fingerprinting &amp; Substring Extraction</span>
+                    <span className="text-cyan-400 font-bold">(select substring(@@version...))</span>
+                  </div>
+                  <p className="text-[11px] text-slate-400">
+                    Probes database engine internals character-by-character using <code className="text-cyan-300">SUBSTRING(@@version,1,1)='X'</code> and boolean logic.
+                  </p>
+                </div>
               </div>
             )}
 

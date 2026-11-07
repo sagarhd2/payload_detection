@@ -26,6 +26,46 @@ interface HeuristicPattern {
 
 const SQLI_PATTERNS: HeuristicPattern[] = [
   {
+    name: 'Order By / Group By Column Enumeration',
+    category: 'Column Enumeration / Reconnaissance',
+    regex: /\b(?:ORDER|GROUP)\s+BY\s+(?:\d+|(?:\d+\s*,\s*\d+)+|\([^)]+\))/i,
+    severity: 'HIGH',
+    explanation: 'Attempts to enumerate table column counts via `ORDER BY n` or `GROUP BY n` in preparation for UNION-based data extraction.',
+    remediation: 'Never pass user inputs directly into ORDER BY clauses. Enforce strict allowlists of permissible sort columns or use parameterized ORM queries.',
+  },
+  {
+    name: 'Subquery Fingerprinting & Character Extraction',
+    category: 'Boolean-Based Blind / Fingerprinting',
+    regex: /(?:\bAND\b|\bOR\b|\bSELECT\b)?\s*\(?\s*(?:SELECT\s+)?(?:SUBSTRING|SUBSTR|MID|ASCII|LENGTH|BIN|HEX)\s*\(\s*(?:@@\w+|version\s*\(\)|database\s*\(\)|user\s*\(\)|current_user|[^,]+)\s*,\s*\d+\s*(?:,\s*\d+)?\s*\)\s*\)?\s*(?:=|!=|<|>|LIKE|REGEXP)\s*['\"\d\w]/i,
+    severity: 'CRITICAL',
+    explanation: 'Extracts database software versions (e.g. `@@version`), usernames, or schema bytes character-by-character using substring and comparison routines.',
+    remediation: 'Use parameterized queries with prepared statement bindings. Parameter bindings render subquery expressions into inert literal strings.',
+  },
+  {
+    name: 'Database System Variable & Internal Metadata Inspection',
+    category: 'Database Fingerprinting',
+    regex: /(?:@@(?:version|hostname|datadir|servername|basedir|version_compile_os)|(?:\b|\()(?:version|database|schema|user|current_user|session_user)\s*\(\))/i,
+    severity: 'HIGH',
+    explanation: 'Interrogates database system variables or environment banners (e.g. `@@version`, `database()`) to identify database engine and vulnerability compatibility.',
+    remediation: 'Bind user parameters as string literals. Restrict access to database system metadata functions in the database user role.',
+  },
+  {
+    name: 'Boolean Logic Evaluation Injection',
+    category: 'Boolean-Based Injection',
+    regex: /(?:'|\"|\b)\s*(?:AND|OR)\s+['"(]?\s*(?:(?:\d+\s*=\s*\d+)|(?:'[^']+'\s*=\s*'[^']+')|true|false|(?:[1-9]\d*\s*>\s*[0-9]\d*))\s*(?:--|#|\/\*|$)/i,
+    severity: 'HIGH',
+    explanation: 'Injects boolean expressions like `AND 1=1` or `AND 5=5` to alter query logical outcomes and probe for blind vulnerabilities.',
+    remediation: 'Adopt parameterized queries with prepared statements.',
+  },
+  {
+    name: 'Conditional Branching Blind Injection',
+    category: 'Blind SQL Injection',
+    regex: /\b(?:CASE\s+WHEN\b.*?THEN|IF\s*\(\s*[^,]+,\s*[^,]+,\s*[^)]+\)|IIF\s*\()/i,
+    severity: 'CRITICAL',
+    explanation: 'Uses conditional evaluation statements (`CASE WHEN ... THEN`, `IF(...)`) to branch execution paths for blind data exfiltration.',
+    remediation: 'Enforce parameterized queries to evaluate all inputs strictly as literal constants.',
+  },
+  {
     name: 'Tautology Authentication Bypass',
     category: 'Boolean-Based / Tautology',
     regex: /(?:'|\b)\s*(?:OR|\|\||XOR)\s+['"(]?\s*(?:(?:1\s*=\s*1)|(?:'1'\s*=\s*'1')|(?:'a'\s*=\s*'a')|(?:true)|(?:\d+\s*=\s*\d+)|(?:'[a-z]'\s*=\s*'[a-z]'))/i,
@@ -48,6 +88,14 @@ const SQLI_PATTERNS: HeuristicPattern[] = [
     severity: 'CRITICAL',
     explanation: 'Appends an arbitrary SELECT query to extract secret tables, passwords, and database metadata.',
     remediation: 'Adopt ORM query builders or parameterization. Restrict database user privileges with least privilege.',
+  },
+  {
+    name: 'Aggregate String Concatenation Exfiltration',
+    category: 'Data Exfiltration',
+    regex: /\b(?:GROUP_CONCAT|CONCAT_WS|CONCAT)\s*\(/i,
+    severity: 'HIGH',
+    explanation: 'Concatenates multiple rows or schema objects into a single string for exfiltration across query boundaries.',
+    remediation: 'Enforce prepared statements and restrict database account privileges.',
   },
   {
     name: 'Piggybacked / Stacked Multiple Query Execution',
@@ -112,7 +160,7 @@ function isClearlyBenign(str: string): boolean {
   if (isBenignNameWithApostrophe(trimmed)) return true;
   // If string contains only standard username chars and no quotes, semicolons, comments, or SQL keywords
   if (/^[a-zA-Z0-9_@.\- ]+$/.test(trimmed)) {
-    const hasSqlKeywords = /\b(SELECT|UNION|DROP|INSERT|DELETE|UPDATE|SLEEP|EXEC|TABLE)\b/i.test(trimmed);
+    const hasSqlKeywords = /\b(SELECT|UNION|DROP|INSERT|DELETE|UPDATE|SLEEP|EXEC|TABLE|ORDER|GROUP|BY|FROM|WHERE|AND|OR|HAVING|LIMIT)\b/i.test(trimmed);
     return !hasSqlKeywords;
   }
   return false;
