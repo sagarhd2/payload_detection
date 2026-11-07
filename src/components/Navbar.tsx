@@ -6,8 +6,6 @@ import {
   Terminal,
   MessageSquare,
   Server,
-  Radio,
-  Cpu,
   Layers,
 } from 'lucide-react';
 import { AgentStatus } from '../types';
@@ -45,22 +43,21 @@ export const Navbar: React.FC<NavbarProps> = ({
             <div>
               <div className="flex items-center gap-2">
                 <span className="font-mono font-black text-lg tracking-wider bg-gradient-to-r from-cyan-200 via-cyan-400 to-blue-400 bg-clip-text text-transparent flex items-center gap-1.5">
-                  AEGIS-SQL // ADAPTIVE SENTINEL
+                  AegisSQL Sentinel
                 </span>
                 <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-cyan-950 text-cyan-300 border border-cyan-700 font-bold uppercase tracking-widest">
                   {status ? status.modelVersion : 'v3.8.4-adaptive'}
                 </span>
               </div>
               <p className="text-[11px] font-mono text-cyan-300/70 hidden sm:flex items-center gap-1">
-                <span className="text-cyan-400 font-bold">[NAVY+CYAN CYBER MATRIX]</span>
-                <span>Autonomous Injection Defense &amp; Daily Threat Ingestion</span>
+                <span>Autonomous SQL Injection Defense &amp; Daily Learning Agent</span>
               </p>
             </div>
           </div>
 
-          {/* Useful Top Right Controls (Navy + Cyan) */}
+          {/* Top Right Controls (Navy + Cyan) */}
           <div className="flex items-center gap-2.5 font-mono">
-            {/* Real-Time Sensor Telemetry Status (Useful replacement for DEFCON) */}
+            {/* Real-Time Sensor Telemetry Status */}
             <div className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#081735] border border-cyan-800/80 text-cyan-300 text-xs font-bold shadow-sm shadow-cyan-950">
               <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse"></span>
               <span>SENSORS: SYNCHRONIZED</span>

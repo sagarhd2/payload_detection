@@ -57,7 +57,7 @@ export const LoginPortal: React.FC<LoginPortalProps> = ({ onLoginAttempt }) => {
       <div className="text-center max-w-2xl mx-auto mb-8">
         <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-cyan-950/80 border border-cyan-800 text-cyan-300 text-xs mb-3 shadow-md shadow-cyan-950/60">
           <Zap className="w-3.5 h-3.5 text-cyan-400 animate-pulse" />
-          <span className="tracking-widest font-bold">NAVY+CYAN CYBER MATRIX // REAL-TIME SQLi INTERCEPTOR</span>
+          <span className="tracking-widest font-bold">AUTONOMOUS SQLi INTERCEPTOR // DEFENSE SENSORS ACTIVE</span>
         </div>
         <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
           SECURE AUTHENTICATION GATEWAY

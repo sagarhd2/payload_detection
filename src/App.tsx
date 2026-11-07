@@ -7,6 +7,7 @@ import { PayloadSandbox } from './components/PayloadSandbox';
 import { SecurityIncidentLogs } from './components/SecurityIncidentLogs';
 import { CyberAiChatbot } from './components/CyberAiChatbot';
 import { PortScanner } from './components/PortScanner';
+import { PresentationDeck } from './components/PresentationDeck';
 import { AgentStatus, TrainingRun, ThreatFeedItem, IncidentLog } from './types';
 
 export default function App() {
@@ -19,6 +20,7 @@ export default function App() {
   const [sandboxPayload, setSandboxPayload] = useState<string>('');
   const [isChatOpen, setIsChatOpen] = useState<boolean>(false);
   const [isPortScannerOpen, setIsPortScannerOpen] = useState<boolean>(false);
+  const [isPresentationOpen, setIsPresentationOpen] = useState<boolean>(false);
 
   const fetchStatus = async () => {
     try {
@@ -157,6 +159,12 @@ export default function App() {
           />
         )}
       </main>
+
+      {/* Project PPT Presentation Modal */}
+      <PresentationDeck
+        isOpen={isPresentationOpen}
+        onClose={() => setIsPresentationOpen(false)}
+      />
 
       {/* Nmap-Style Network Port Scanner Modal */}
       <PortScanner
