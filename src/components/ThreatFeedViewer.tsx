@@ -79,7 +79,16 @@ export const ThreatFeedViewer: React.FC<ThreatFeedViewerProps> = ({
           </div>
 
           <div className="flex items-center gap-2 overflow-x-auto pb-1 sm:pb-0">
-            {['ALL', 'OWASP_HONEYPOT', 'NVD_CVE_FEED', 'MODSECURITY_CRS', 'GITHUB_ADVISORY'].map((src) => (
+            {[
+              'ALL',
+              'CISA_KEV_CATALOG',
+              'GITHUB_SECURITY_ADVISORIES',
+              'NVD_NIST_API_V2',
+              'OWASP_PREVENTION_SERIES',
+              'OWASP_HONEYPOT',
+              'NVD_CVE_FEED',
+              'MODSECURITY_CRS',
+            ].map((src) => (
               <button
                 key={src}
                 onClick={() => setFilterSource(src)}

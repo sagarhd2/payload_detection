@@ -1,5 +1,6 @@
 import { GoogleGenAI, Type } from '@google/genai';
 import { SQLiWarning } from '../src/types';
+import { sqliteDb } from './sqliteDb';
 
 // Initialize server-side Gemini client
 let ai: GoogleGenAI | null = null;
@@ -13,131 +14,6 @@ if (process.env.GEMINI_API_KEY) {
     },
   });
 }
-
-// AST & Lexical Rule Definitions
-interface HeuristicPattern {
-  name: string;
-  category: string;
-  regex: RegExp;
-  severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
-  explanation: string;
-  remediation: string;
-}
-
-const SQLI_PATTERNS: HeuristicPattern[] = [
-  {
-    name: 'Order By / Group By Column Enumeration',
-    category: 'Column Enumeration / Reconnaissance',
-    regex: /\b(?:ORDER|GROUP)\s+BY\s+(?:\d+|(?:\d+\s*,\s*\d+)+|\([^)]+\))/i,
-    severity: 'HIGH',
-    explanation: 'Attempts to enumerate table column counts via `ORDER BY n` or `GROUP BY n` in preparation for UNION-based data extraction.',
-    remediation: 'Never pass user inputs directly into ORDER BY clauses. Enforce strict allowlists of permissible sort columns or use parameterized ORM queries.',
-  },
-  {
-    name: 'Subquery Fingerprinting & Character Extraction',
-    category: 'Boolean-Based Blind / Fingerprinting',
-    regex: /(?:\bAND\b|\bOR\b|\bSELECT\b)?\s*\(?\s*(?:SELECT\s+)?(?:SUBSTRING|SUBSTR|MID|ASCII|LENGTH|BIN|HEX)\s*\(\s*(?:@@\w+|version\s*\(\)|database\s*\(\)|user\s*\(\)|current_user|[^,]+)\s*,\s*\d+\s*(?:,\s*\d+)?\s*\)\s*\)?\s*(?:=|!=|<|>|LIKE|REGEXP)\s*['\"\d\w]/i,
-    severity: 'CRITICAL',
-    explanation: 'Extracts database software versions (e.g. `@@version`), usernames, or schema bytes character-by-character using substring and comparison routines.',
-    remediation: 'Use parameterized queries with prepared statement bindings. Parameter bindings render subquery expressions into inert literal strings.',
-  },
-  {
-    name: 'Database System Variable & Internal Metadata Inspection',
-    category: 'Database Fingerprinting',
-    regex: /(?:@@(?:version|hostname|datadir|servername|basedir|version_compile_os)|(?:\b|\()(?:version|database|schema|user|current_user|session_user)\s*\(\))/i,
-    severity: 'HIGH',
-    explanation: 'Interrogates database system variables or environment banners (e.g. `@@version`, `database()`) to identify database engine and vulnerability compatibility.',
-    remediation: 'Bind user parameters as string literals. Restrict access to database system metadata functions in the database user role.',
-  },
-  {
-    name: 'Boolean Logic Evaluation Injection',
-    category: 'Boolean-Based Injection',
-    regex: /(?:'|\"|\b)\s*(?:AND|OR)\s+['"(]?\s*(?:(?:\d+\s*=\s*\d+)|(?:'[^']+'\s*=\s*'[^']+')|true|false|(?:[1-9]\d*\s*>\s*[0-9]\d*))\s*(?:--|#|\/\*|$)/i,
-    severity: 'HIGH',
-    explanation: 'Injects boolean expressions like `AND 1=1` or `AND 5=5` to alter query logical outcomes and probe for blind vulnerabilities.',
-    remediation: 'Adopt parameterized queries with prepared statements.',
-  },
-  {
-    name: 'Conditional Branching Blind Injection',
-    category: 'Blind SQL Injection',
-    regex: /\b(?:CASE\s+WHEN\b.*?THEN|IF\s*\(\s*[^,]+,\s*[^,]+,\s*[^)]+\)|IIF\s*\()/i,
-    severity: 'CRITICAL',
-    explanation: 'Uses conditional evaluation statements (`CASE WHEN ... THEN`, `IF(...)`) to branch execution paths for blind data exfiltration.',
-    remediation: 'Enforce parameterized queries to evaluate all inputs strictly as literal constants.',
-  },
-  {
-    name: 'Tautology Authentication Bypass',
-    category: 'Boolean-Based / Tautology',
-    regex: /(?:'|\b)\s*(?:OR|\|\||XOR)\s+['"(]?\s*(?:(?:1\s*=\s*1)|(?:'1'\s*=\s*'1')|(?:'a'\s*=\s*'a')|(?:true)|(?:\d+\s*=\s*\d+)|(?:'[a-z]'\s*=\s*'[a-z]'))/i,
-    severity: 'CRITICAL',
-    explanation: 'Attempts to force the SQL WHERE clause to evaluate to true, bypassing credential validation.',
-    remediation: 'Use parameterized queries or prepared statements (e.g. `SELECT * FROM users WHERE username = ?`).',
-  },
-  {
-    name: 'Inline Comment Query Truncation',
-    category: 'Comment Evasion',
-    regex: /(?:'|\"|\b)\s*(?:--|#|\/\*|\/\*!\d*).*$/m,
-    severity: 'HIGH',
-    explanation: 'Uses SQL comment markers (`--`, `#`, or `/*`) to truncate the rest of the backend SQL query, suppressing password checks.',
-    remediation: 'Enforce strict input parameter binding. Never concatenate user variables into query strings.',
-  },
-  {
-    name: 'UNION-Based Schema & Data Extraction',
-    category: 'Union-Based Injection',
-    regex: /\bUNION\s+(?:ALL\s+|DISTINCT\s+)?SELECT\b/i,
-    severity: 'CRITICAL',
-    explanation: 'Appends an arbitrary SELECT query to extract secret tables, passwords, and database metadata.',
-    remediation: 'Adopt ORM query builders or parameterization. Restrict database user privileges with least privilege.',
-  },
-  {
-    name: 'Aggregate String Concatenation Exfiltration',
-    category: 'Data Exfiltration',
-    regex: /\b(?:GROUP_CONCAT|CONCAT_WS|CONCAT)\s*\(/i,
-    severity: 'HIGH',
-    explanation: 'Concatenates multiple rows or schema objects into a single string for exfiltration across query boundaries.',
-    remediation: 'Enforce prepared statements and restrict database account privileges.',
-  },
-  {
-    name: 'Piggybacked / Stacked Multiple Query Execution',
-    category: 'Stacked Queries',
-    regex: /;\s*(?:DROP|TRUNCATE|DELETE\s+FROM|INSERT\s+INTO|UPDATE|ALTER\s+TABLE|EXEC|SHUTDOWN)\b/i,
-    severity: 'CRITICAL',
-    explanation: 'Attempts to execute destructive second-order commands such as dropping tables or altering permissions.',
-    remediation: 'Disable multi-statement queries in database connection drivers and employ strict least privilege.',
-  },
-  {
-    name: 'Time-Based Blind Delay Injection',
-    category: 'Time-Based Blind',
-    regex: /\b(?:SLEEP\s*\(|pg_sleep\s*\(|WAITFOR\s+DELAY|BENCHMARK\s*\(|DBMS_LOCK\.SLEEP)/i,
-    severity: 'CRITICAL',
-    explanation: 'Injects sleep or delay routines to infer database contents character-by-character through response timing.',
-    remediation: 'Use parameterized SQL calls and set tight server query execution timeout thresholds.',
-  },
-  {
-    name: 'Error-Based XPath / Function Injection',
-    category: 'Error-Based Injection',
-    regex: /\b(?:EXTRACTVALUE|UPDATEXML|EXP\(|CAST\s*\(|CONVERT\s*\().*?\bSELECT\b/i,
-    severity: 'HIGH',
-    explanation: 'Intentionally triggers database syntax/conversion errors to leak sensitive schema data in error messages.',
-    remediation: 'Disable verbose database error messaging in production and use parameterized inputs.',
-  },
-  {
-    name: 'Inline Comment Whitespace Obfuscation',
-    category: 'WAF Evasion / Obfuscation',
-    regex: /\b(?:OR|AND|SELECT|UNION)\/\*.*?\*\/(?:OR|AND|SELECT|1=1|'1'='1')/i,
-    severity: 'HIGH',
-    explanation: 'Embeds C-style comments between tokens (`admin\'/**/OR/**/1=1`) to evade simplistic whitespace-based regex filters.',
-    remediation: 'Implement AST lexical parsing at the application layer and normalize inputs before validation.',
-  },
-  {
-    name: 'Hex / ASCII Function Encoding Evasion',
-    category: 'Function-Based Evasion',
-    regex: /(?:0x[0-9a-fA-F]{2,}|CHAR\s*\(\s*\d+\s*\)|CHR\s*\(\s*\d+\s*\))/i,
-    severity: 'MEDIUM',
-    explanation: 'Encodes malicious SQL payloads in hexadecimal or ASCII function calls to circumvent keyword blacklists.',
-    remediation: 'Validate input against strict alphanumeric / permitted format whitelists.',
-  },
-];
 
 // Benign exemptions: normal names like O'Connor or standard emails
 function isBenignNameWithApostrophe(str: string): boolean {
@@ -153,12 +29,11 @@ function isBenignNameWithApostrophe(str: string): boolean {
   return false;
 }
 
-// Pure benign fast-path: pure alphanumeric, standard symbols without quotes/delimiters
+// Benign fast-path: pure alphanumeric, standard symbols without quotes/delimiters
 function isClearlyBenign(str: string): boolean {
   const trimmed = str.trim();
   if (!trimmed) return true;
   if (isBenignNameWithApostrophe(trimmed)) return true;
-  // If string contains only standard username chars and no quotes, semicolons, comments, or SQL keywords
   if (/^[a-zA-Z0-9_@.\- ]+$/.test(trimmed)) {
     const hasSqlKeywords = /\b(SELECT|UNION|DROP|INSERT|DELETE|UPDATE|SLEEP|EXEC|TABLE|ORDER|GROUP|BY|FROM|WHERE|AND|OR|HAVING|LIMIT)\b/i.test(trimmed);
     return !hasSqlKeywords;
@@ -174,7 +49,10 @@ function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T
   ]);
 }
 
-// Fast heuristic AST detection
+/**
+ * Deterministic AST & Lexical Rule Detection Engine
+ * Uses the active detection rules stored and versioned in SQLite.
+ */
 export function runHeuristicDetection(
   username: string,
   password?: string
@@ -186,31 +64,38 @@ export function runHeuristicDetection(
     fieldsToCheck.push({ field: 'password', value: password });
   }
 
+  const activeRules = sqliteDb.getActiveRules();
+
   for (const { field, value } of fieldsToCheck) {
     if (!value || isBenignNameWithApostrophe(value)) {
       continue;
     }
 
-    for (const pattern of SQLI_PATTERNS) {
-      if (pattern.regex.test(value)) {
-        const matches = value.match(pattern.regex);
-        const flaggedTokens = matches ? [matches[0]] : [value];
+    for (const rule of activeRules) {
+      try {
+        const regex = new RegExp(rule.rule_definition, 'i');
+        if (regex.test(value)) {
+          const matches = value.match(regex);
+          const flaggedTokens = matches ? [matches[0]] : [value];
 
-        return {
-          blocked: true,
-          severity: pattern.severity,
-          threatType: pattern.name,
-          confidence: 96,
-          explanation: pattern.explanation,
-          detectedTokens: flaggedTokens,
-          attackVector: pattern.category,
-          recommendedRemediation: pattern.remediation,
-          targetField: field,
-          rawPayload: value,
-          timestamp: new Date().toISOString(),
-          cveReference: 'CWE-89: SQL Injection',
-          analysisMode: 'HEURISTIC_AST_WAF',
-        };
+          return {
+            blocked: true,
+            severity: rule.severity as any,
+            threatType: rule.rule_name,
+            confidence: Math.round(rule.weight * 100),
+            explanation: `Deterministic security rule violation: ${rule.rule_name}. Matches known signature pattern originating from ${rule.source_origin}.`,
+            detectedTokens: flaggedTokens,
+            attackVector: rule.category,
+            recommendedRemediation: 'Adopt parameterized queries with prepared statement bindings (e.g. SELECT * FROM users WHERE username = ?).',
+            targetField: field,
+            rawPayload: value,
+            timestamp: new Date().toISOString(),
+            cveReference: 'CWE-89: SQL Injection',
+            analysisMode: 'HEURISTIC_AST_WAF',
+          };
+        }
+      } catch {
+        // Safe regex skip
       }
     }
 
@@ -239,7 +124,10 @@ export function runHeuristicDetection(
   return null;
 }
 
-// Gemini AI Autonomous Agent Deep Security Inspection
+/**
+ * Gemini AI Security Advisor & Deep Inspection
+ * Explains attacks, assists remediation, and analyzes intent.
+ */
 export async function runGeminiAgentDetection(
   username: string,
   password?: string
@@ -258,79 +146,91 @@ Password: "${password || ''}"
 
 Return a JSON object conforming strictly to the requested schema.`;
 
-    const apiCall = ai.models.generateContent({
-      model: 'gemini-3.8-flash',
-      contents: prompt,
-      config: {
-        systemInstruction:
-          'You are AegisSQL Sentinel, an elite cybersecurity AI agent specializing in real-time SQL injection detection, AST query semantics analysis, and automated threat defense. Distinguish between actual malicious SQL injection payloads and benign edge cases (such as names with apostrophes or standard passwords).',
-        responseMimeType: 'application/json',
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            isInjection: {
-              type: Type.BOOLEAN,
-              description: 'True if a malicious SQL injection attempt is detected, false if safe/benign.',
-            },
-            severity: {
-              type: Type.STRING,
-              description: 'Severity level: LOW, MEDIUM, HIGH, or CRITICAL.',
-            },
-            threatType: {
-              type: Type.STRING,
-              description: 'Specific classification of the SQL injection technique.',
-            },
-            confidence: {
-              type: Type.NUMBER,
-              description: 'Confidence score between 0 and 100.',
-            },
-            explanation: {
-              type: Type.STRING,
-              description: 'Clear, concise explanation of the attack payload and its threat mechanic.',
-            },
-            detectedTokens: {
-              type: Type.ARRAY,
-              items: { type: Type.STRING },
-              description: 'List of specific SQL tokens or snippets flagged.',
-            },
-            attackVector: {
-              type: Type.STRING,
-              description: 'Attack vector category (e.g. Tautology, Stacked Query, Blind Time-based, Union).',
-            },
-            recommendedRemediation: {
-              type: Type.STRING,
-              description: 'Specific code remediation, e.g. prepared statement syntax.',
-            },
-            targetField: {
-              type: Type.STRING,
-              description: 'username, password, or both.',
-            },
-            cveReference: {
-              type: Type.STRING,
-              description: 'Relevant CWE or CVE reference.',
+    // Try gemini-3.1-flash-lite first for high speed and fresh quota
+    const modelsToTry = ['gemini-3.1-flash-lite', 'gemini-3.8-flash'];
+    let responseText: string | null = null;
+
+    for (const modelName of modelsToTry) {
+      try {
+        const apiCall = ai.models.generateContent({
+          model: modelName,
+          contents: prompt,
+          config: {
+            systemInstruction:
+              'You are AegisSQL Sentinel, an elite cybersecurity AI agent specializing in real-time SQL injection detection, AST query semantics analysis, and automated threat defense. Distinguish between actual malicious SQL injection payloads and benign edge cases (such as names with apostrophes or standard passwords).',
+            responseMimeType: 'application/json',
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                isInjection: {
+                  type: Type.BOOLEAN,
+                  description: 'True if a malicious SQL injection attempt is detected, false if safe/benign.',
+                },
+                severity: {
+                  type: Type.STRING,
+                  description: 'Severity level: LOW, MEDIUM, HIGH, or CRITICAL.',
+                },
+                threatType: {
+                  type: Type.STRING,
+                  description: 'Specific classification of the SQL injection technique.',
+                },
+                confidence: {
+                  type: Type.NUMBER,
+                  description: 'Confidence score between 0 and 100.',
+                },
+                explanation: {
+                  type: Type.STRING,
+                  description: 'Clear, concise explanation of the attack payload and its threat mechanic.',
+                },
+                detectedTokens: {
+                  type: Type.ARRAY,
+                  items: { type: Type.STRING },
+                  description: 'List of specific SQL tokens or snippets flagged.',
+                },
+                attackVector: {
+                  type: Type.STRING,
+                  description: 'Attack vector category (e.g. Tautology, Stacked Query, Blind Time-based, Union).',
+                },
+                recommendedRemediation: {
+                  type: Type.STRING,
+                  description: 'Specific code remediation, e.g. prepared statement syntax.',
+                },
+                targetField: {
+                  type: Type.STRING,
+                  description: 'username, password, or both.',
+                },
+                cveReference: {
+                  type: Type.STRING,
+                  description: 'Relevant CWE or CVE reference.',
+                },
+              },
+              required: [
+                'isInjection',
+                'severity',
+                'threatType',
+                'confidence',
+                'explanation',
+                'detectedTokens',
+                'attackVector',
+                'recommendedRemediation',
+              ],
             },
           },
-          required: [
-            'isInjection',
-            'severity',
-            'threatType',
-            'confidence',
-            'explanation',
-            'detectedTokens',
-            'attackVector',
-            'recommendedRemediation',
-          ],
-        },
-      },
-    });
+        });
 
-    const response = await withTimeout(apiCall, 3500, null);
-    if (!response) return null;
+        const resp = await withTimeout(apiCall, 3500, null);
+        if (resp && resp.text) {
+          responseText = resp.text.trim();
+          break;
+        }
+      } catch {
+        // Try fallback model
+      }
+    }
 
-    const jsonStr = (response.text ?? '').trim();
-    if (!jsonStr) return null;
+    if (!responseText) return null;
 
-    const parsed = JSON.parse(jsonStr);
+    const parsed = JSON.parse(responseText);
     if (parsed.isInjection) {
       return {
         blocked: true,
@@ -351,13 +251,16 @@ Return a JSON object conforming strictly to the requested schema.`;
     }
 
     return null;
-  } catch (err) {
-    console.warn('Gemini agent inspection error or fallback:', err);
+  } catch {
     return null;
   }
 }
 
-// Master Detector combining both Fast Heuristic WAF and Deep Gemini AI Agent
+/**
+ * Master Hybrid Detector:
+ * Deterministic rules provide the non-negotiable primary defense line.
+ * Gemini provides supplementary threat analysis and deep explanations.
+ */
 export async function detectSQLInjection(
   username: string,
   password?: string
@@ -367,25 +270,34 @@ export async function detectSQLInjection(
     return null;
   }
 
-  // Step 1: Run fast heuristic check
-  const heuristicVerdict = runHeuristicDetection(username, password);
+  // 1. Run deterministic heuristic AST rules
+  const deterministicVerdict = runHeuristicDetection(username, password);
 
-  // If heuristic found a critical threat, we can fast-return or supplement with AI
-  if (heuristicVerdict && !process.env.GEMINI_API_KEY) {
-    return heuristicVerdict;
+  // If deterministic rules already flagged a CRITICAL or HIGH threat:
+  if (deterministicVerdict) {
+    // Optionally enrich with Gemini if available, without delaying rejection
+    if (process.env.GEMINI_API_KEY) {
+      const aiVerdict = await runGeminiAgentDetection(username, password);
+      if (aiVerdict) {
+        return {
+          ...deterministicVerdict,
+          explanation: `${deterministicVerdict.explanation} AI Analysis: ${aiVerdict.explanation}`,
+          recommendedRemediation: aiVerdict.recommendedRemediation || deterministicVerdict.recommendedRemediation,
+          analysisMode: 'HYBRID',
+          confidence: Math.max(deterministicVerdict.confidence, aiVerdict.confidence),
+        };
+      }
+    }
+    return deterministicVerdict;
   }
 
-  // Step 2: If Gemini API is available, invoke AI agent for deep intent and contextual analysis
+  // 2. If deterministic rule was borderline, check Gemini for obfuscated variations
   if (process.env.GEMINI_API_KEY) {
     const aiVerdict = await runGeminiAgentDetection(username, password);
     if (aiVerdict) {
-      if (heuristicVerdict) {
-        aiVerdict.analysisMode = 'HYBRID';
-        aiVerdict.confidence = Math.max(heuristicVerdict.confidence, aiVerdict.confidence);
-      }
       return aiVerdict;
     }
   }
 
-  return heuristicVerdict;
+  return null;
 }

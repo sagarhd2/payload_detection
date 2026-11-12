@@ -1,7 +1,8 @@
 import { GoogleGenAI } from '@google/genai';
 import { db } from './db';
-import { generateDailySecurityLogsBatch } from './threatFeed';
-import { TrainingRun } from '../src/types';
+import { sqliteDb, RetrainingHistoryRecord } from './sqliteDb';
+import { syncAllThreatSources, SyncSummary } from './threatIntelligenceCollector';
+import { executeRetrainingPipeline } from './retrainingPipeline';
 
 let ai: GoogleGenAI | null = null;
 if (process.env.GEMINI_API_KEY) {
@@ -15,95 +16,97 @@ if (process.env.GEMINI_API_KEY) {
   });
 }
 
-let runCounter = 106;
 let isTrainingInProgress = false;
 
-export async function executeDailyTrainingRun(): Promise<TrainingRun> {
+export async function executeAutonomousTrainingCycle(
+  jobType: 'SCHEDULED_DAILY' | 'MANUAL' = 'MANUAL'
+): Promise<{
+  syncSummary: SyncSummary;
+  retrainingResult: RetrainingHistoryRecord;
+}> {
   if (isTrainingInProgress) {
-    throw new Error('A daily training run is already in progress.');
+    throw new Error('A daily training or threat sync cycle is already in progress.');
+  }
+
+  const acquired = sqliteDb.acquireSchedulerLock('daily_training_agent');
+  if (!acquired) {
+    throw new Error('Database scheduler lock held by active worker. Please wait for current cycle to conclude.');
   }
 
   isTrainingInProgress = true;
   try {
-    const currentStatus = db.getStatus();
-    const versionMatch = currentStatus.modelVersion.match(/v(\d+)\.(\d+)\.(\d+)/);
-    let newVersion = 'v3.8.5-adaptive';
-    if (versionMatch) {
-      const major = versionMatch[1];
-      const minor = versionMatch[2];
-      const patch = parseInt(versionMatch[3], 10) + 1;
-      newVersion = `v${major}.${minor}.${patch}-adaptive`;
-    }
+    console.log(`[AegisSQL Training Agent] Initiating ${jobType} cycle...`);
 
-    // Step 1: Fetch fresh daily security telemetry batch
-    const freshLogs = generateDailySecurityLogsBatch();
-    const logsCount = Math.floor(Math.random() * 1500) + 3800;
-    const newSignatures = Math.floor(Math.random() * 25) + 20;
+    // Step 1: Collect actual fresh cybersecurity intelligence from legitimate public feeds
+    console.log('[AegisSQL Training Agent] 1/3 Ingesting from CISA KEV, GHSA, NVD, OWASP...');
+    const syncSummary = await syncAllThreatSources();
+    console.log(`[AegisSQL Training Agent] Ingested ${syncSummary.totalFetched} records, added ${syncSummary.totalNewAdded} new entries, skipped ${syncSummary.totalDuplicatesSkipped} duplicates.`);
 
-    const accuracyBefore = currentStatus.accuracyRate;
-    const accuracyGain = +(Math.random() * 0.04 + 0.02).toFixed(3);
-    const accuracyAfter = Math.min(99.98, +(accuracyBefore + accuracyGain).toFixed(3));
+    // Step 2: Separate model training from CVE descriptions. Train on verified labelled dataset.
+    console.log('[AegisSQL Training Agent] 2/3 Executing genuine candidate model training & validation split evaluation...');
+    const retrainingResult = await executeRetrainingPipeline(jobType);
+    console.log(`[AegisSQL Training Agent] Model candidate evaluation: ${retrainingResult.validation_result}. Precision: ${retrainingResult.precision}, F1: ${retrainingResult.f1_score}.`);
 
-    let summary = `Ingested ${logsCount.toLocaleString()} honeypot and CVE records. Indexed ${newSignatures} new AST evasion patterns across MySQL, PostgreSQL, and MSSQL dialect layers.`;
-
-    // Step 2: If Gemini API is available, optionally generate AI synthesis of threat feeds
-    if (ai && process.env.GEMINI_API_KEY) {
+    // Step 3: AI Threat Intelligence Executive Summary (if Gemini available)
+    if (ai && process.env.GEMINI_API_KEY && syncSummary.totalNewAdded > 0) {
       try {
-        const payloadSnippets = freshLogs.map((l) => l.payloadSample).join('\n');
-        const prompt = `Synthesize a 2-sentence executive summary of the following recently captured SQL injection attacks for an adaptive WAF model retraining report:\n${payloadSnippets}`;
+        const prompt = `Synthesize a concise 2-sentence executive briefing summarizing the newly synchronized cybersecurity intelligence (${syncSummary.totalNewAdded} records from CISA KEV and NIST) and model evaluation status (F1 Score: ${retrainingResult.f1_score}) for the SOC dashboard.`;
         const response = await ai.models.generateContent({
-          model: 'gemini-3.8-flash',
+          model: 'gemini-3.1-flash-lite',
           contents: prompt,
         });
         if (response.text) {
-          summary = response.text.trim();
+          retrainingResult.summary = `${retrainingResult.summary} AI SOC Briefing: ${response.text.trim()}`;
+          // Update summary in SQLite
+          sqliteDb['db'].prepare('UPDATE retraining_history SET summary = ? WHERE id = ?').run(retrainingResult.summary, retrainingResult.id);
         }
-      } catch (err) {
-        console.warn('AI threat synthesis fallback to default summary:', err);
+      } catch {
+        // Safe AI summary skip
       }
     }
 
-    const trainingRun: TrainingRun = {
-      id: `train-run-${runCounter++}`,
-      timestamp: new Date().toISOString(),
-      modelPreviousVersion: currentStatus.modelVersion,
-      modelNewVersion: newVersion,
-      sourcesProcessed: [
-        'OWASP_HONEYPOT',
-        'NVD_CVE_FEED',
-        'MODSECURITY_CRS',
-        'GITHUB_ADVISORY',
-      ],
-      logsAnalyzedCount: logsCount,
-      newPatternsLearned: newSignatures,
-      accuracyBefore,
-      accuracyAfter,
-      summary,
-      status: 'COMPLETED',
-    };
-
-    db.addTrainingRun(trainingRun, freshLogs);
-    return trainingRun;
+    console.log(`[AegisSQL Training Agent] ${jobType} cycle completed successfully.`);
+    return { syncSummary, retrainingResult };
   } finally {
+    sqliteDb.releaseSchedulerLock();
     isTrainingInProgress = false;
   }
 }
 
-// Background 24-hour cron scheduler
+// Background Autonomous Scheduler: Runs safely every 24 hours
 export function initAutonomousTrainingScheduler() {
-  console.log('[AegisSQL Agent] Continuous 24-hour training scheduler initialized.');
-  // Check every hour if a scheduled 24h run is due
-  setInterval(async () => {
-    const status = db.getStatus();
-    const nextRun = new Date(status.nextScheduledTraining).getTime();
-    if (Date.now() >= nextRun && !isTrainingInProgress) {
-      console.log('[AegisSQL Agent] 24-Hour scheduled daily training cycle starting...');
-      try {
-        await executeDailyTrainingRun();
-        console.log('[AegisSQL Agent] Daily training run completed successfully.');
-      } catch (e) {
-        console.error('[AegisSQL Agent] Automated training error:', e);
+  console.log('[AegisSQL Agent] 24-Hour Autonomous Retraining Scheduler active.');
+
+  // Run initial lightweight source sync on boot if database has few threat records
+  setTimeout(async () => {
+    try {
+      const stats = sqliteDb.getThreatStats();
+      if (stats.total < 10) {
+        console.log('[AegisSQL Agent] Bootstrapping initial real-world threat feeds...');
+        await syncAllThreatSources();
       }
+    } catch (e) {
+      console.warn('[AegisSQL Agent] Initial threat feed bootstrap notice:', e);
     }
-  }, 60 * 60 * 1000); // 1 hour check
+  }, 3000);
+
+  // Check every 30 minutes if 24 hours have elapsed since the last completed training run
+  setInterval(async () => {
+    if (isTrainingInProgress) return;
+
+    try {
+      const history = sqliteDb.getRetrainingHistory(1);
+      const lastRun = history[0];
+      const now = Date.now();
+      const lastRunTime = lastRun ? new Date(lastRun.timestamp).getTime() : 0;
+      const twentyFourHoursMs = 24 * 60 * 60 * 1000;
+
+      if (now - lastRunTime >= twentyFourHoursMs) {
+        console.log('[AegisSQL Agent] 24-hour interval elapsed. Triggering autonomous daily cycle...');
+        await executeAutonomousTrainingCycle('SCHEDULED_DAILY');
+      }
+    } catch (err) {
+      console.error('[AegisSQL Agent] Scheduler check error:', err);
+    }
+  }, 30 * 60 * 1000);
 }

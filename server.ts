@@ -4,7 +4,7 @@ import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 import { db } from './server/db';
 import { detectSQLInjection } from './server/detector';
-import { executeDailyTrainingRun, initAutonomousTrainingScheduler } from './server/trainingAgent';
+import { initAutonomousTrainingScheduler } from './server/trainingAgent';
 import { IncidentLog } from './src/types';
 
 dotenv.config();
@@ -120,15 +120,92 @@ app.get('/api/agent/status', (_req, res) => {
 // 4. Trigger Daily Retraining & Real-World Logs Fetching
 app.post('/api/agent/train-daily', async (_req, res) => {
   try {
-    const run = await executeDailyTrainingRun();
+    const { executeAutonomousTrainingCycle } = await import('./server/trainingAgent');
+    const result = await executeAutonomousTrainingCycle('MANUAL');
     res.json({
       success: true,
-      run,
+      result,
       status: db.getStatus(),
     });
   } catch (error: any) {
     res.status(400).json({ success: false, error: error.message });
   }
+});
+
+// 4b. Trigger Live External Cybersecurity Intelligence Collection
+app.post('/api/agent/sync-sources', async (_req, res) => {
+  try {
+    const { syncAllThreatSources } = await import('./server/threatIntelligenceCollector');
+    const summary = await syncAllThreatSources();
+    res.json({
+      success: true,
+      summary,
+      status: db.getStatus(),
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// 4c. Model Rollback Endpoint
+app.post('/api/agent/rollback', async (req, res) => {
+  try {
+    const { targetVersion } = req.body;
+    const { sqliteDb } = await import('./server/sqliteDb');
+    
+    const prev = sqliteDb.getPreviousModel();
+    const versionToRollback = targetVersion || prev?.version;
+
+    if (!versionToRollback) {
+      return res.status(400).json({ success: false, error: 'No rollback candidate version found' });
+    }
+
+    const success = sqliteDb.rollbackToModel(versionToRollback);
+    if (!success) {
+      return res.status(400).json({ success: false, error: `Could not rollback to version ${versionToRollback}` });
+    }
+
+    return res.json({
+      success: true,
+      message: `Successfully rolled back to verified model ${versionToRollback}`,
+      activeModel: sqliteDb.getActiveModel(),
+      previousModel: sqliteDb.getPreviousModel(),
+      status: db.getStatus(),
+    });
+  } catch (error: any) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// 4d. Model Comparison & Versions
+app.get('/api/agent/model-comparison', async (_req, res) => {
+  const { sqliteDb } = await import('./server/sqliteDb');
+  const activeModel = sqliteDb.getActiveModel();
+  const previousModel = sqliteDb.getPreviousModel();
+  const allVersions = sqliteDb.getAllModelVersions();
+  const latestEvaluations = sqliteDb['db'].prepare('SELECT * FROM model_evaluation ORDER BY evaluated_at DESC LIMIT 5').all();
+
+  res.json({
+    activeModel,
+    previousModel,
+    allVersions,
+    latestEvaluations,
+  });
+});
+
+// 4e. Source Sync History & Live Source Sync Times
+app.get('/api/agent/sync-history', async (_req, res) => {
+  const { sqliteDb } = await import('./server/sqliteDb');
+  const history = sqliteDb.getSyncHistory(20);
+  const latestSyncs = sqliteDb.getLatestSyncTimes();
+  res.json({ history, latestSyncs });
+});
+
+// 4f. Detection Rules Catalog
+app.get('/api/agent/rules', async (_req, res) => {
+  const { sqliteDb } = await import('./server/sqliteDb');
+  const rules = sqliteDb.getAllRules();
+  res.json(rules);
 });
 
 // 5. Training History

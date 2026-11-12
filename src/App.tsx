@@ -206,6 +206,7 @@ export default function App() {
             trainingHistory={trainingHistory}
             onTriggerTraining={handleTriggerTraining}
             isTraining={isTraining}
+            onRefreshStatus={refreshAllData}
           />
         )}
 
