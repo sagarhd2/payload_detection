@@ -7,7 +7,7 @@ import { detectSQLInjection } from './server/detector';
 import { initAutonomousTrainingScheduler } from './server/trainingAgent';
 import { IncidentLog } from './src/types';
 
-dotenv.config();
+dotenv.config({ override: true });
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -98,8 +98,9 @@ app.post('/api/auth/login', async (req, res) => {
 // 2. Direct Payload Inspection Sandbox
 app.post('/api/agent/inspect', async (req, res) => {
   try {
-    const { payload = '', field = 'query' } = req.body;
+    const { payload = '' } = req.body;
     const warning = await detectSQLInjection(payload);
+    db.recordWorkbenchInspection(String(payload), warning);
 
     return res.status(200).json({
       success: true,
@@ -229,137 +230,146 @@ app.post('/api/agent/clear-logs', (_req, res) => {
   res.json({ success: true, message: 'Incident logs cleared' });
 });
 
-import { generateContextualSecurityAnswer } from './server/securityAiEngine';
+import {
+  generateGeminiSecurityReply,
+  SecurityAiError,
+  SUPPORTED_CHAT_MODELS,
+  ChatRole,
+  IncomingChatMessage,
+} from './server/securityAiEngine';
+import { sqliteDb } from './server/sqliteDb';
 
-// 9. Multi-Turn Security AI Chatbot (Gemini 3.8 Flash, Gemini 3.1 Flash-Lite, Gemini 4 Argon)
+// In-memory sliding window rate limiter for /api/chat (25 requests per minute per IP)
+const chatRateBuckets = new Map<string, number[]>();
+const CHAT_RATE_LIMIT = 25;
+const CHAT_RATE_WINDOW_MS = 60_000;
+
+function checkChatRateLimit(clientKey: string): { allowed: boolean; retryAfterSec: number } {
+  const now = Date.now();
+  const timestamps = (chatRateBuckets.get(clientKey) || []).filter(
+    (t) => now - t < CHAT_RATE_WINDOW_MS
+  );
+  if (timestamps.length >= CHAT_RATE_LIMIT) {
+    const oldest = timestamps[0];
+    const retryAfterSec = Math.max(1, Math.ceil((CHAT_RATE_WINDOW_MS - (now - oldest)) / 1000));
+    chatRateBuckets.set(clientKey, timestamps);
+    return { allowed: false, retryAfterSec };
+  }
+  timestamps.push(now);
+  chatRateBuckets.set(clientKey, timestamps);
+  return { allowed: true, retryAfterSec: 0 };
+}
+
+// 9a. Security AI Chatbot Readiness & Connected Module Counts (no secrets exposed)
+app.get('/api/chat/status', (_req, res) => {
+  const configured = Boolean(
+    process.env.GEMINI_API_KEY &&
+      process.env.GEMINI_API_KEY.trim() !== '' &&
+      process.env.GEMINI_API_KEY !== 'MY_GEMINI_API_KEY'
+  );
+  return res.json({
+    configured,
+    supportedModels: SUPPORTED_CHAT_MODELS,
+    contextStats: {
+      incidentsCount: db.getIncidentLogs().length,
+      threatFeedsCount: db.getThreatFeeds().length,
+      activeRulesCount: sqliteDb.getActiveRules().length,
+      portScansCount: db.getRecentPortScans().length,
+      workbenchInspectionsCount: db.getRecentWorkbenchInspections().length,
+    },
+  });
+});
+
+// 9b. Multi-Turn Security AI Chatbot (Real Gemini API Integration + Live Telemetry Context)
 app.post('/api/chat', async (req, res) => {
   try {
+    const clientIp = req.ip || req.socket.remoteAddress || 'unknown';
+    const rateCheck = checkChatRateLimit(String(clientIp));
+    if (!rateCheck.allowed) {
+      res.setHeader('Retry-After', String(rateCheck.retryAfterSec));
+      return res.status(429).json({
+        error: `Rate limit exceeded. Please wait ${rateCheck.retryAfterSec}s before sending another Security AI query.`,
+        code: 'RATE_LIMITED',
+      });
+    }
+
     const {
-      messages = [],
-      model = 'gemini-3.8-flash',
+      messages,
+      model = 'gemini-4-hydrogen',
       role = 'red_team',
-    } = req.body;
+      contextHint,
+    } = req.body || {};
 
-    if (!messages.length) {
-      return res.status(400).json({ error: 'Messages array is required' });
+    if (!Array.isArray(messages) || messages.length === 0) {
+      return res.status(400).json({
+        error: 'A non-empty messages array is required.',
+        code: 'VALIDATION_ERROR',
+      });
     }
 
-    // Supported models per project requirements:
-    // - gemini-3.8-flash (default, general tasks)
-    // - gemini-3.1-flash-lite (fast tasks)
-    // - gemini-4-argon (complex deep reasoning tasks)
-    const validModels = ['gemini-3.8-flash', 'gemini-3.1-flash-lite', 'gemini-4-argon'];
-    const selectedModel = validModels.includes(model) ? model : 'gemini-3.8-flash';
-
-    // System instruction tailored to role
-    let systemInstruction =
-      'You are Aegis-Red Sentinel, an elite Red Team Offensive Security & SQL Injection Architect. You help security engineers, developers, and ethical hackers understand SQL injection vectors (tautology, union-based, time-based blind, error-based, second-order, WAF evasion tricks) and craft bulletproof defense countermeasures (parameterized queries, AST lexical sanitizers, least privilege). Provide concise, technical, and educational answers with markdown code snippets where helpful.';
-
-    if (role === 'blue_team') {
-      systemInstruction =
-        'You are Aegis-Blue Guardian, a Senior Defensive Cyber Architect & Secure Coding Specialist. Your primary mission is guiding developers and security engineers in building unbreachable database architectures. You provide production-ready parameterized queries (Node.js pg/mysql2, Python asyncpg, Go, Java), database least-privilege configurations, AST lexical validators, input sanitization routines, and WAF rules. Always prioritize concrete remediation code.';
-    } else if (role === 'fast_auditor') {
-      systemInstruction =
-        'You are Aegis-Quick Auditor, a high-speed SQL syntax checker and threat classifier. Provide rapid, concise bullet points analyzing whether a query or input is dangerous, which tokens trigger alerts (e.g., OR 1=1, UNION SELECT, SLEEP, ORDER BY), and a 1-line safe rewrite.';
-    }
-
-    let reply = '';
-    const geminiApiKey = process.env.GEMINI_API_KEY || process.env.API_KEY || 'AIzaSyCtRBvDjJtp1LkzG3S52gNJjYvilQrR37s';
-
-    if (geminiApiKey) {
-      try {
-        const { GoogleGenAI } = await import('@google/genai');
-        const ai = new GoogleGenAI({
-          apiKey: geminiApiKey,
-          httpOptions: { headers: { 'User-Agent': 'aistudio-build' } },
+    const sanitizedMessages: IncomingChatMessage[] = [];
+    for (const m of messages) {
+      if (!m || typeof m.content !== 'string') continue;
+      const content = m.content.trim();
+      if (!content) continue;
+      if (content.length > 16000) {
+        return res.status(400).json({
+          error: 'Message exceeds the maximum allowed length of 16,000 characters.',
+          code: 'VALIDATION_ERROR',
         });
-
-        // Maintain full multi-turn conversation history
-        const contents = messages.map((m: { role: string; content: string }) => ({
-          role: m.role === 'model' ? 'model' : 'user',
-          parts: [{ text: m.content }],
-        }));
-
-        // 1. Try selected model with a fast 3.5s race ceiling
-        try {
-          const timeoutPromise = new Promise<{ text?: string }>((resolve) =>
-            setTimeout(() => resolve({ text: '' }), 3500)
-          );
-
-          const apiCall = ai.models.generateContent({
-            model: selectedModel,
-            contents,
-            config: {
-              systemInstruction,
-            },
-          });
-
-          const response = await Promise.race([
-            apiCall.catch((err) => {
-              // Gracefully absorb 429 quota or connection timeouts without noisy error logs
-              const isQuota = err?.status === 429 || (err?.message && (err.message.includes('429') || err.message.includes('quota')));
-              if (!isQuota) {
-                console.log(`[Gemini API ${selectedModel}] note: switched to resilient failover`);
-              }
-              return { text: '' };
-            }),
-            timeoutPromise,
-          ]);
-
-          if (response && response.text) {
-            reply = response.text;
-          }
-        } catch {
-          // Proceed to fast model fallback
-        }
-
-        // 2. If primary model didn't return (e.g. 429 quota on gemini-3.8-flash), fast failover to gemini-3.1-flash-lite
-        if (!reply && selectedModel !== 'gemini-3.1-flash-lite') {
-          try {
-            const fastTimeout = new Promise<{ text?: string }>((resolve) =>
-              setTimeout(() => resolve({ text: '' }), 3500)
-            );
-
-            const fastCall = ai.models.generateContent({
-              model: 'gemini-3.1-flash-lite',
-              contents,
-              config: {
-                systemInstruction,
-              },
-            });
-
-            const fastResp = await Promise.race([
-              fastCall.catch(() => ({ text: '' })),
-              fastTimeout,
-            ]);
-
-            if (fastResp && fastResp.text) {
-              reply = fastResp.text;
-            }
-          } catch {
-            // Proceed to heuristic engine
-          }
-        }
-      } catch {
-        // Fall back gracefully to contextual security engine
       }
+      sanitizedMessages.push({
+        role: m.role === 'model' ? 'model' : 'user',
+        content,
+      });
     }
 
-    // Contextual and dynamic answer engine tailored strictly to what the user asked
-    if (!reply) {
-      reply = generateContextualSecurityAnswer(messages, role as any, selectedModel as any);
+    const lastMessage = sanitizedMessages[sanitizedMessages.length - 1];
+    if (!lastMessage || lastMessage.role !== 'user' || !lastMessage.content) {
+      return res.status(400).json({
+        error: 'Please enter a non-empty message before sending.',
+        code: 'VALIDATION_ERROR',
+      });
     }
 
-    return res.json({ reply, model: selectedModel, role });
-  } catch (err: any) {
+    const validRoles: ChatRole[] = ['red_team', 'blue_team', 'fast_auditor'];
+    const selectedRole: ChatRole = validRoles.includes(role) ? role : 'red_team';
+
+    const result = await generateGeminiSecurityReply(
+      sanitizedMessages,
+      typeof model === 'string' ? model : 'gemini-4-hydrogen',
+      selectedRole,
+      contextHint && typeof contextHint === 'object'
+        ? {
+            activeTab:
+              typeof contextHint.activeTab === 'string' ? contextHint.activeTab.slice(0, 40) : undefined,
+            currentWorkbenchPayload:
+              typeof contextHint.currentWorkbenchPayload === 'string'
+                ? contextHint.currentWorkbenchPayload.slice(0, 400)
+                : undefined,
+          }
+        : undefined
+    );
+
     return res.json({
-      reply: generateContextualSecurityAnswer(
-        req.body?.messages || [],
-        (req.body?.role || 'red_team') as any,
-        (req.body?.model || 'gemini-3.8-flash') as any
-      ),
-      model: req.body?.model || 'gemini-3.8-flash',
-      role: req.body?.role || 'red_team',
+      reply: result.reply,
+      model: result.modelUsed,
+      role: result.role,
+      contextSummary: result.contextSummary,
+    });
+  } catch (err: unknown) {
+    if (err instanceof SecurityAiError) {
+      console.warn(`[Security AI /api/chat] ${err.code} (${err.statusCode}): ${err.message}`);
+      return res.status(err.statusCode).json({
+        error: err.message,
+        code: err.code,
+      });
+    }
+    const msg = err instanceof Error ? err.message : 'Unexpected server error while contacting Gemini AI.';
+    console.warn(`[Security AI /api/chat] Unexpected error: ${msg}`);
+    return res.status(502).json({
+      error: 'Unable to generate a response from Gemini AI right now. Please try again.',
+      code: 'UNKNOWN_ERROR',
     });
   }
 });
@@ -370,6 +380,7 @@ app.post('/api/scan', async (req, res) => {
     const { target = '127.0.0.1' } = req.body;
     const { executePortScan } = await import('./server/portScanner');
     const result = await executePortScan(target);
+    db.recordPortScan(result);
     return res.json(result);
   } catch (err: any) {
     console.error('Port scan error:', err);

@@ -2,11 +2,12 @@ import { GoogleGenAI, Type } from '@google/genai';
 import { SQLiWarning } from '../src/types';
 import { sqliteDb } from './sqliteDb';
 
-// Initialize server-side Gemini client
-let ai: GoogleGenAI | null = null;
-if (process.env.GEMINI_API_KEY) {
-  ai = new GoogleGenAI({
-    apiKey: process.env.GEMINI_API_KEY,
+// Lazily create server-side Gemini client
+function getDetectorGeminiClient(): GoogleGenAI | null {
+  const apiKey = process.env.GEMINI_API_KEY?.trim();
+  if (!apiKey || apiKey === 'MY_GEMINI_API_KEY') return null;
+  return new GoogleGenAI({
+    apiKey,
     httpOptions: {
       headers: {
         'User-Agent': 'aistudio-build',
@@ -132,22 +133,22 @@ export async function runGeminiAgentDetection(
   username: string,
   password?: string
 ): Promise<SQLiWarning | null> {
-  if (!ai || !process.env.GEMINI_API_KEY) {
+  const ai = getDetectorGeminiClient();
+  if (!ai) {
     return null;
   }
 
   try {
-    const prompt = `Analyze the following authentication credentials submitted to a web login portal.
+    const prompt = `Analyze the following authentication input submitted to a web login portal.
 Determine whether there is ANY SQL injection attempt (including classic, tautology, comment bypass, time-based blind, union-based, stacked queries, hex/obfuscated, second-order, or polyglot SQLi).
 Note: Common benign inputs such as Irish names with single apostrophes (e.g. "O'Connor") or standard email addresses or strong passwords with symbols MUST be classified as safe (isInjection: false).
 
-Username: "${username}"
-Password: "${password || ''}"
+Username/Payload Input: "${username}"
+${password ? `Secondary Input Contains SQL Indicators: ${/['";]|--|\b(OR|AND|UNION|SELECT|SLEEP|DROP)\b/i.test(password) ? 'Yes' : 'No'}` : ''}
 
 Return a JSON object conforming strictly to the requested schema.`;
 
-    // Try gemini-3.1-flash-lite first for high speed and fresh quota
-    const modelsToTry = ['gemini-3.1-flash-lite', 'gemini-3.8-flash'];
+    const modelsToTry = ['gemini-3.1-flash-lite', 'gemini-4-hydrogen'];
     let responseText: string | null = null;
 
     for (const modelName of modelsToTry) {

@@ -153,7 +153,7 @@ export const LoginPortal: React.FC<LoginPortalProps> = ({ onLoginAttempt }) => {
 
           {/* Quick Clear */}
           <div className="mt-4 pt-3 border-t border-cyan-950 flex items-center justify-between text-[11px] text-slate-400">
-            <span>DEFENSE: FAST AST + GEMINI 3.8 AGENT</span>
+            <span>DEFENSE: FAST AST + GEMINI AI AGENT</span>
             <button
               type="button"
               onClick={() => {
@@ -515,7 +515,7 @@ db.execute(query, [username, password]);`}
                   </div>
 
                   <div className="bg-[#030816] p-2.5 rounded-xl border border-cyan-950">
-                    <span className="text-blue-400 font-bold block mb-1">🧠 Gemini 3.8 AI Agent</span>
+                    <span className="text-blue-400 font-bold block mb-1">🧠 Gemini AI Agent</span>
                     <p className="text-slate-400">
                       Evaluates complex intent, polyglots, and nested obfuscation while generating exact developer remediation guidance.
                     </p>

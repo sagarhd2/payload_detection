@@ -1,8 +1,18 @@
-import { IncidentLog, TrainingRun, ThreatFeedItem, AgentStatus } from '../src/types';
+import { IncidentLog, TrainingRun, ThreatFeedItem, AgentStatus, SQLiWarning } from '../src/types';
 import { sqliteDb, IncidentLogRecord, RetrainingHistoryRecord } from './sqliteDb';
+import { ScanResult } from './portScanner';
+
+export interface WorkbenchInspectionRecord {
+  timestamp: string;
+  payload: string;
+  isInjection: boolean;
+  warning: SQLiWarning | null;
+}
 
 class AgentDatabase {
   private totalPayloadsScreened = 15420;
+  private recentPortScans: ScanResult[] = [];
+  private recentWorkbenchInspections: WorkbenchInspectionRecord[] = [];
 
   public getStatus(): AgentStatus {
     const activeModel = sqliteDb.getActiveModel();
@@ -122,6 +132,34 @@ class AgentDatabase {
 
   public clearLogs(): void {
     sqliteDb.clearIncidentLogs();
+  }
+
+  public recordPortScan(scan: ScanResult): void {
+    this.recentPortScans.unshift(scan);
+    if (this.recentPortScans.length > 10) {
+      this.recentPortScans = this.recentPortScans.slice(0, 10);
+    }
+  }
+
+  public getRecentPortScans(): ScanResult[] {
+    return [...this.recentPortScans];
+  }
+
+  public recordWorkbenchInspection(payload: string, warning: SQLiWarning | null): void {
+    this.recentWorkbenchInspections.unshift({
+      timestamp: new Date().toISOString(),
+      payload: payload.slice(0, 500),
+      isInjection: Boolean(warning),
+      warning,
+    });
+    if (this.recentWorkbenchInspections.length > 15) {
+      this.recentWorkbenchInspections = this.recentWorkbenchInspections.slice(0, 15);
+    }
+    this.totalPayloadsScreened += 1;
+  }
+
+  public getRecentWorkbenchInspections(): WorkbenchInspectionRecord[] {
+    return [...this.recentWorkbenchInspections];
   }
 }
 

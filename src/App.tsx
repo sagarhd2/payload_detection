@@ -155,6 +155,10 @@ export default function App() {
         <CyberAiChatbot
           isOpen={isChatOpen}
           onClose={() => setIsChatOpen(false)}
+          contextHint={{
+            activeTab: 'landing',
+            currentWorkbenchPayload: sandboxPayload || undefined,
+          }}
         />
       </>
     );
@@ -246,6 +250,10 @@ export default function App() {
       <CyberAiChatbot
         isOpen={isChatOpen}
         onClose={() => setIsChatOpen(false)}
+        contextHint={{
+          activeTab,
+          currentWorkbenchPayload: sandboxPayload || undefined,
+        }}
       />
 
       {/* Navy + Cyan Footer */}

@@ -4,10 +4,11 @@ import { sqliteDb, RetrainingHistoryRecord } from './sqliteDb';
 import { syncAllThreatSources, SyncSummary } from './threatIntelligenceCollector';
 import { executeRetrainingPipeline } from './retrainingPipeline';
 
-let ai: GoogleGenAI | null = null;
-if (process.env.GEMINI_API_KEY) {
-  ai = new GoogleGenAI({
-    apiKey: process.env.GEMINI_API_KEY,
+function getTrainingGeminiClient(): GoogleGenAI | null {
+  const apiKey = process.env.GEMINI_API_KEY?.trim();
+  if (!apiKey || apiKey === 'MY_GEMINI_API_KEY') return null;
+  return new GoogleGenAI({
+    apiKey,
     httpOptions: {
       headers: {
         'User-Agent': 'aistudio-build',
@@ -48,7 +49,8 @@ export async function executeAutonomousTrainingCycle(
     console.log(`[AegisSQL Training Agent] Model candidate evaluation: ${retrainingResult.validation_result}. Precision: ${retrainingResult.precision}, F1: ${retrainingResult.f1_score}.`);
 
     // Step 3: AI Threat Intelligence Executive Summary (if Gemini available)
-    if (ai && process.env.GEMINI_API_KEY && syncSummary.totalNewAdded > 0) {
+    const ai = getTrainingGeminiClient();
+    if (ai && syncSummary.totalNewAdded > 0) {
       try {
         const prompt = `Synthesize a concise 2-sentence executive briefing summarizing the newly synchronized cybersecurity intelligence (${syncSummary.totalNewAdded} records from CISA KEV and NIST) and model evaluation status (F1 Score: ${retrainingResult.f1_score}) for the SOC dashboard.`;
         const response = await ai.models.generateContent({

@@ -1,500 +1,492 @@
-import { GeminiModel, ChatRole } from '../src/components/CyberAiChatbot';
+import { GoogleGenAI, ThinkingLevel, GenerateContentResponse } from '@google/genai';
+import { db } from './db';
+import { sqliteDb } from './sqliteDb';
 
-interface ChatMessage {
+export type SupportedGeminiModel = 'gemini-4-hydrogen' | 'gemini-3.1-flash-lite';
+export type ChatRole = 'red_team' | 'blue_team' | 'fast_auditor';
+
+export interface IncomingChatMessage {
   role: 'user' | 'model';
   content: string;
 }
 
-/**
- * Intelligent Contextual Security Engine
- * Answers any cybersecurity, SQL injection, port scanning, network recon,
- * or defense question dynamically based on the exact user prompt.
- */
-export function generateContextualSecurityAnswer(
-  messages: ChatMessage[],
-  role: ChatRole = 'red_team',
-  model: GeminiModel = 'gemini-3.8-flash'
-): string {
-  const lastMessage = messages[messages.length - 1]?.content || '';
-  const trimmed = lastMessage.trim();
-  const lower = trimmed.toLowerCase();
-
-  // Extract previous user queries for multi-turn context
-  const previousUserMessages = messages
-    .filter((m) => m.role === 'user')
-    .slice(0, -1)
-    .map((m) => m.content);
-
-  // 1. IP Address / Port Scanning / Network Reconnaissance Questions
-  const ipMatch = trimmed.match(/\b(?:\d{1,3}\.){3}\d{1,3}\b/);
-  const portMatch = lower.match(/\bport\s*(\d{1,5})\b/) || lower.match(/\b(\d{1,5})\/(?:tcp|udp)\b/);
-
-  if (
-    lower.includes('scan') ||
-    lower.includes('nmap') ||
-    lower.includes('port') ||
-    ipMatch ||
-    lower.includes('network') ||
-    lower.includes('recon')
-  ) {
-    const targetIp = ipMatch ? ipMatch[0] : '127.0.0.1';
-    const specificPort = portMatch ? portMatch[1] : null;
-
-    if (role === 'blue_team') {
-      return `### 🛡️ Blue Team Network & Port Hardening Assessment
-
-**Target Analyzed:** \`${targetIp}\` ${specificPort ? `| Focus Port: \`${specificPort}\`` : ''}
-
-**Defensive Security Recommendations:**
-1. **Host-Based Firewall Rules (iptables / ufw):**
-   Restrict exposure so database ports (e.g. 3306 MySQL, 5432 PostgreSQL, 1433 MSSQL) are strictly bound to \`127.0.0.1\` or dedicated internal VPC subnets.
-   \`\`\`bash
-   # Block public exposure of database ports:
-   sudo ufw deny 3306/tcp
-   sudo ufw deny 5432/tcp
-   sudo ufw allow from 10.0.0.0/16 to any port 5432 proto tcp
-   \`\`\`
-
-2. **Banner Obfuscation & Minimization:**
-   Suppress server tokens in web servers to prevent version-specific CVE targeting:
-   \`\`\`nginx
-   # In nginx.conf:
-   server_tokens off;
-   \`\`\`
-
-3. **Audit with the In-App Scanner:**
-   Use the **Port Scanner (Nmap)** tool in the top navigation bar to run live TCP SYN probes against \`${targetIp}\` to confirm which services are exposed.`;
-    }
-
-    if (role === 'fast_auditor') {
-      return `### ⚡ Rapid Port & Network Audit
-- **Target Host:** \`${targetIp}\`
-- **Recon Mode:** Nmap-style TCP banner grabbing & version fingerprinting
-- **Key Risk Indicators:**
-  - Standard Web (80/HTTP, 443/HTTPS): Review for SQLi in GET/POST parameters
-  - Database Services (3306/MySQL, 5432/PgSQL): High risk if exposed to public WAN
-  - Remote Access (22/SSH, 3389/RDP): Enforce key-based auth & rate-limiting
-- **Action:** Launch the built-in Nmap scanner in AegisSQL to inspect real-time port states.`;
-    }
-
-    // Default: Red Team
-    return `### ⚔️ Red Team Reconnaissance: Network Port & Service Fingerprinting
-
-**Target Scope:** \`${targetIp}\` ${specificPort ? `| Investigating Port \`${specificPort}\`` : ''}
-
-**Offensive Recon Methodology (Nmap-Style Service Probing):**
-1. **TCP Port Probing:**
-   Send TCP SYN packets to discover open sockets without completing the 3-way handshake (stealth half-open scanning).
-   \`\`\`bash
-   nmap -sV -sC -Pn -T4 -p 21,22,80,443,1433,3306,5432,8080 ${targetIp}
-   \`\`\`
-
-2. **Service Version Vulnerability Mapping:**
-   - **Port 80/443 (HTTP/HTTPS):** Primary vector for Web Application SQL Injection (CWE-89), testing login forms and search endpoints.
-   - **Port 3306 (MySQL) / 5432 (PostgreSQL):** Direct database listeners. If accessible, attackers test brute-force root/postgres logins and out-of-band data exfiltration.
-   - **Port 22 (SSH):** Tested for weak key exchange or legacy CVE exploitation.
-
-3. **Next Step:** You can run a live scan on this IP right now using the **Port Scanner (Nmap)** button in the header bar!`;
-  }
-
-  // 2. ORDER BY & GROUP BY Column Enumeration
-  if (lower.includes('order by') || lower.includes('group by')) {
-    if (role === 'blue_team') {
-      return `### 🛡️ Blue Team Defense: Safe Dynamic Column Sorting (ORDER BY)
-
-**Your Question:** How to safely handle queries with dynamic \`${trimmed.slice(0, 50)}\`?
-
-**The Challenge:**
-SQL bind parameters (\`?\` or \`$1\`) cannot be used for column names or sorting direction (\`ASC\`/\`DESC\`) in database query engines.
-
-**Production Solution (Whitelist Enforcement):**
-\`\`\`typescript
-// Node.js / TypeScript Whitelist Implementation
-const SAFE_COLUMNS = new Map([
-  ['date', 'created_at'],
-  ['name', 'username'],
-  ['id', 'user_id'],
-]);
-
-export function getSafeSortedQuery(userInputColumn: string, userDirection: string) {
-  const column = SAFE_COLUMNS.get(userInputColumn.toLowerCase()) || 'created_at';
-  const direction = userDirection.toUpperCase() === 'DESC' ? 'DESC' : 'ASC';
-
-  // Safe to interpolate because both variables are guaranteed to come from strict server whitelists
-  return \`SELECT user_id, username, created_at FROM accounts ORDER BY \${column} \${direction} LIMIT 25\`;
+export interface ChatContextHint {
+  activeTab?: string;
+  currentWorkbenchPayload?: string;
 }
-\`\`\`
 
-**Why This Stops Attacks:**
-Attempted inputs like \`ORDER BY 1\`, \`ORDER BY 999\`, or subqueries like \`ORDER BY (SELECT ...)\` are rejected by the whitelist map before reaching the SQL engine.`;
+export type AiErrorCode =
+  | 'MISSING_API_KEY'
+  | 'INVALID_API_KEY'
+  | 'QUOTA_EXCEEDED'
+  | 'MODEL_UNAVAILABLE'
+  | 'TIMEOUT'
+  | 'NETWORK_ERROR'
+  | 'EMPTY_RESPONSE'
+  | 'VALIDATION_ERROR'
+  | 'RATE_LIMITED'
+  | 'UNKNOWN_ERROR';
+
+export class SecurityAiError extends Error {
+  public readonly statusCode: number;
+  public readonly code: AiErrorCode;
+
+  constructor(message: string, statusCode: number, code: AiErrorCode) {
+    super(message);
+    this.name = 'SecurityAiError';
+    this.statusCode = statusCode;
+    this.code = code;
+  }
+}
+
+export const SUPPORTED_CHAT_MODELS: SupportedGeminiModel[] = [
+  'gemini-4-hydrogen',
+  'gemini-3.1-flash-lite',
+];
+
+function getGeminiClient(): GoogleGenAI {
+  const apiKey = process.env.GEMINI_API_KEY?.trim();
+  if (!apiKey || apiKey === 'MY_GEMINI_API_KEY') {
+    throw new SecurityAiError(
+      'Gemini API key is not configured on the server. Please configure GEMINI_API_KEY in Settings > Secrets.',
+      503,
+      'MISSING_API_KEY'
+    );
+  }
+
+  return new GoogleGenAI({
+    apiKey,
+    httpOptions: {
+      headers: {
+        'User-Agent': 'aistudio-build',
+      },
+    },
+  });
+}
+
+/**
+ * Collects sanitized, real-time telemetry from AegisSQL Sentinel backend modules.
+ * Never includes passwords, API keys, or confidential secrets.
+ */
+export function buildLiveSystemContext(hint?: ChatContextHint): string {
+  const status = db.getStatus();
+  const activeRules = sqliteDb.getActiveRules();
+  const incidents = db.getIncidentLogs().slice(0, 8);
+  const workbench = db.getRecentWorkbenchInspections().slice(0, 5);
+  const scans = db.getRecentPortScans().slice(0, 3);
+  const feeds = db.getThreatFeeds().slice(0, 6);
+  const syncHistory = sqliteDb.getSyncHistory(4);
+  const trainingHistory = db.getTrainingHistory().slice(0, 3);
+
+  const lines: string[] = [
+    '=== LIVE AEGISSQL SENTINEL SYSTEM TELEMETRY (USE ONLY VERIFIED DATA BELOW; NEVER FABRICATE) ===',
+    `1. DETECTION ENGINE & MODEL STATUS:`,
+    `   - Active Model: ${status.modelVersion} (Previous Rollback Candidate: ${status.previousModelVersion || 'none'})`,
+    `   - Learning Mode: ${status.learningMode} | Schedule: ${status.trainingCronInterval}`,
+    `   - Validation Metrics: Precision=${status.precision ?? 'N/A'}, Recall=${status.recall ?? 'N/A'}, F1=${status.f1Score ?? 'N/A'}, FPR=${status.falsePositiveRate}, FNR=${status.falseNegativeRate ?? 'N/A'}`,
+    `   - Screened Payloads: ${status.totalPayloadsScreened} | Blocked Threats: ${status.totalThreatsBlocked} | Active Rules: ${activeRules.length}`,
+    `   - Last Trained: ${status.lastTrainedTime} | Next Scheduled Run: ${status.nextScheduledTraining}`,
+    '',
+    `2. ACTIVE SQL INJECTION DETECTION RULES (${activeRules.length} rules in SQLite):`,
+    ...activeRules.map(
+      (r) => `   - [${r.id}] ${r.rule_name} | Category: ${r.category} | Severity: ${r.severity} | Weight: ${r.weight}`
+    ),
+    '',
+    `3. RECENT INTERCEPTED AUTHENTICATION INCIDENTS (${incidents.length} most recent; passwords redacted):`,
+  ];
+
+  if (incidents.length === 0) {
+    lines.push('   - No SQL injection login incidents currently recorded in detection_logs.');
+  } else {
+    for (const inc of incidents) {
+      lines.push(
+        `   - [${inc.id}] Time: ${inc.timestamp} | Source IP: ${inc.ipAddress} | Input: ${JSON.stringify(inc.usernameAttempted)} | Threat: ${inc.threatType} | Severity: ${inc.severity} | Flagged Tokens: ${JSON.stringify(inc.tokensFlagged)} | Action: ${inc.actionTaken}`
+      );
     }
+  }
 
-    if (role === 'fast_auditor') {
-      return `### ⚡ Rapid Audit: ORDER BY Column Enumeration
-- **Input Evaluated:** \`${trimmed.slice(0, 60)}\`
-- **Threat Classification:** 🚨 HIGH SEVERITY (Reconnaissance / Column Enumeration)
-- **Mechanism:** Attackers test increasing integers (\`ORDER BY 1, 2, ...\`) to find the column count before injecting \`UNION SELECT\`.
-- **Immediate Fix:** Disallow direct user input in ORDER BY clauses. Validate against an explicit array of column strings.`;
+  lines.push('');
+  lines.push(`4. RECENT PAYLOAD WORKBENCH INSPECTIONS (${workbench.length} most recent):`);
+  if (workbench.length === 0) {
+    lines.push('   - No recent Payload Workbench inspections recorded in this session.');
+  } else {
+    for (const w of workbench) {
+      lines.push(
+        `   - Time: ${w.timestamp} | Payload: ${JSON.stringify(w.payload)} | Verdict: ${w.isInjection ? `BLOCKED (${w.warning?.threatType}, ${w.warning?.severity})` : 'CLEAN/BENIGN'}`
+      );
     }
-
-    return `### ⚔️ Red Team Exploit Analysis: ORDER BY Column Count Enumeration
-
-**Payload Analyzed:** \`${trimmed}\`
-
-**How the Exploit Operates:**
-Before an attacker can execute a successful \`UNION SELECT\` attack, they MUST know the exact number of columns returned by the original query.
-
-1. **Step 1: Incremental Testing**
-   \`\`\`sql
-   SELECT id, name, email FROM products WHERE category = 'gear' ORDER BY 1--  /* OK: Col 1 exists */
-   SELECT id, name, email FROM products WHERE category = 'gear' ORDER BY 3--  /* OK: Col 3 exists */
-   SELECT id, name, email FROM products WHERE category = 'gear' ORDER BY 4--  /* CRASH! Error: column 4 out of range */
-   \`\`\`
-2. **Step 2: Conclusion**
-   The database error confirms the query returns exactly **3 columns**.
-3. **Step 3: Exploitation via UNION**
-   \`\`\`sql
-   ' UNION SELECT 1, table_name, 3 FROM information_schema.tables--
-   \`\`\`
-
-**Detection in AegisSQL:**
-The AegisSQL AST Tokenizer flags standalone integers following \`ORDER BY\` or \`GROUP BY\` and blocks the request immediately.`;
   }
 
-  // 3. Substring & Version Extraction / Boolean Blind SQLi
-  if (
-    lower.includes('substring') ||
-    lower.includes('@@version') ||
-    lower.includes('version()') ||
-    lower.includes('ascii') ||
-    lower.includes('substr')
-  ) {
-    if (role === 'blue_team') {
-      return `### 🛡️ Blue Team Defense: Blind Substring & Database Fingerprinting
-
-**Analyzed Payload:** \`${trimmed}\`
-
-**Vulnerability Type:** CWE-89 Blind Boolean Inference & Information Schema Disclosure
-
-**Root Cause:**
-String interpolation allows subqueries like \`(SELECT substring(@@version,1,1))\` to evaluate within the query logic.
-
-**Remediation (Prepared Statement):**
-\`\`\`typescript
-import { db } from './db';
-
-// All user strings are treated purely as literal data, never evaluated
-const results = await db.query(
-  'SELECT id, username, email FROM users WHERE username = $1',
-  [userInput] // Even if userInput contains "(select substring(@@version,1,1))='X'", it matches zero rows safely!
-);
-\`\`\`
-
-**Database Configuration Defense:**
-- Strip database error banners that leak dialect information.
-- Disable access to \`information_schema\` or \`pg_catalog\` for regular web application database users.`;
+  lines.push('');
+  lines.push(`5. RECENT NMAP PORT SCANNER RESULTS (${scans.length} most recent):`);
+  if (scans.length === 0) {
+    lines.push('   - No port scans have been executed in this session yet.');
+  } else {
+    for (const s of scans) {
+      const openSummary = s.ports.map((p) => `${p.port}/${p.protocol}(${p.service}:${p.version})`).join(', ') || 'none';
+      lines.push(
+        `   - Target: ${s.target} (${s.ip}) | State: ${s.state} | Open Ports (${s.openPortsCount}): ${openSummary} | Latency: ${s.latencyMs}ms | Time: ${s.scanTime}`
+      );
     }
+  }
 
-    if (role === 'fast_auditor') {
-      return `### ⚡ Rapid Audit: Substring Version Extraction
-- **Input Analyzed:** \`${trimmed.slice(0, 70)}\`
-- **Threat Level:** 🚨 CRITICAL (Targeted Database Fingerprinting)
-- **Detected Tokens:** \`SUBSTRING\`, \`@@version\` / \`version()\`, conditional comparison
-- **Purpose:** Attacker is extracting database version character-by-character to select dialect-specific CVE exploits.
-- **Action:** Block request and flag IP in incident logs.`;
+  lines.push('');
+  lines.push(`6. THREAT INTELLIGENCE FEED & SYNC STATUS (Total SQLite records: ${status.threatIntelTotal ?? feeds.length}):`);
+  for (const f of feeds) {
+    lines.push(`   - [${f.cveId}] Source: ${f.source} | Severity: ${f.severity} | Title: ${f.targetSoftware}`);
+  }
+  if (syncHistory.length > 0) {
+    lines.push('   Recent Source Syncs:');
+    for (const sy of syncHistory) {
+      lines.push(
+        `   - ${sy.source_name}: ${sy.status} (Fetched: ${sy.records_fetched}, New: ${sy.new_records_added}, Duplicates Skipped: ${sy.duplicates_skipped}, End: ${sy.sync_end})`
+      );
     }
-
-    return `### ⚔️ Red Team Exploit Analysis: Blind Character-by-Character Extraction
-
-**Payload Analyzed:** \`${trimmed}\`
-
-**Mechanics of Boolean-Based Substring Exfiltration:**
-When an application does not echo database results or errors directly to the screen, attackers extract data by asking boolean questions:
-
-\`\`\`sql
--- Testing if the first character of MySQL @@version is '8':
-' AND (SELECT SUBSTRING(@@version, 1, 1)) = '8'--
-\`\`\`
-
-1. **If True:** The application loads normally (HTTP 200 with standard user profile).
-2. **If False:** The application returns an empty list or "User Not Found".
-3. **Automated Binary Search:**
-   Using tools like sqlmap, attackers test ASCII ranges (\`ASCII(SUBSTRING(..., 1, 1)) > 70\`) to exfiltrate passwords and hashes in seconds.
-
-**AegisSQL Countermeasure:**
-The AST scanner intercepts \`SUBSTRING\`, \`MID\`, \`LEFT\`, and \`RIGHT\` nested inside conditional clauses and triggers a Defcon alert.`;
   }
 
-  // 4. Time-Based Blind Injection (SLEEP, WAITFOR, BENCHMARK, pg_sleep)
-  if (
-    lower.includes('sleep') ||
-    lower.includes('waitfor') ||
-    lower.includes('benchmark') ||
-    lower.includes('pg_sleep') ||
-    lower.includes('delay')
-  ) {
-    if (role === 'blue_team') {
-      return `### 🛡️ Blue Team Defense: Time-Based Blind SQLi Remediation
+  lines.push('');
+  lines.push(`7. AUTONOMOUS RETRAINING HISTORY (${trainingHistory.length} latest):`);
+  for (const t of trainingHistory) {
+    lines.push(
+      `   - [${t.id}] ${t.timestamp}: ${t.modelPreviousVersion} -> ${t.modelNewVersion} | Result: ${t.validationResult || t.status} | Summary: ${t.summary}`
+    );
+  }
 
-**Target Threat:** Latency-inducing sleep payloads (\`${trimmed.slice(0, 45)}\`)
-
-**Multi-Layer Defensive Countermeasures:**
-1. **Prepared Statements (CWE-89 Fix):**
-   \`\`\`typescript
-   // Node.js pg/mysql2 prepared statement
-   const user = await pool.query('SELECT * FROM accounts WHERE id = $1', [userId]);
-   \`\`\`
-2. **Database Query Timeouts:**
-   Prevent time-based denial-of-service and inference attacks by capping query duration:
-   \`\`\`sql
-   -- PostgreSQL
-   SET statement_timeout = '2000'; -- Max 2 seconds
-   -- MySQL
-   SET max_execution_time = 2000;
-   \`\`\`
-3. **Egress Anomaly Detection:**
-   Alert security operations when response times from database endpoints spike past normal baselines.`;
+  if (hint?.activeTab || hint?.currentWorkbenchPayload) {
+    lines.push('');
+    lines.push('8. ACTIVE UI CONTEXT:');
+    if (hint.activeTab) lines.push(`   - User currently viewing tab: ${hint.activeTab}`);
+    if (hint.currentWorkbenchPayload) {
+      lines.push(`   - Current Payload Workbench editor text: ${JSON.stringify(hint.currentWorkbenchPayload.slice(0, 400))}`);
     }
-
-    return `### ⚔️ Red Team Exploit Analysis: Time-Based Latency Inference
-
-**Payload Analyzed:** \`${trimmed}\`
-
-**Attack Mechanism:**
-When both screen output and error messages are completely suppressed by the server, time latency provides a reliable side-channel:
-
-\`\`\`sql
--- If database name starts with 's', sleep for 5 seconds:
-admin' AND IF(SUBSTRING(database(), 1, 1) = 's', SLEEP(5), 0)--
-\`\`\`
-
-- If HTTP response takes **5.1s**: Character is confirmed as 's'.
-- If HTTP response takes **0.05s**: Character is not 's'. Move to next character.
-
-**Mitigation:**
-Parameterized queries completely neutralize function execution inside inputs.`;
   }
 
-  // 5. UNION-Based SQL Injection
-  if (lower.includes('union') || lower.includes('union select')) {
-    if (role === 'blue_team') {
-      return `### 🛡️ Blue Team Defense: Parameterized Query Defense for UNION Attacks
+  lines.push('=== END LIVE TELEMETRY ===');
+  return lines.join('\n');
+}
 
-**Analyzed Payload:** \`${trimmed}\`
-
-**How Parameterization Neutralizes UNION Attacks:**
-When queries use string concatenation, the parser treats injected \`UNION SELECT\` tokens as first-class SQL syntax. When parameterized:
-\`\`\`typescript
-// Safe Implementation
-const query = 'SELECT id, title, content FROM articles WHERE category = ?';
-await connection.execute(query, [userInput]);
-\`\`\`
-The database engine compiles the query execution plan *before* inserting \`userInput\`. The input is treated strictly as an inert string literal, making UNION chaining syntactically impossible.`;
-    }
-
-    return `### ⚔️ Red Team Exploit Analysis: UNION-Based Cross-Table Exfiltration
-
-**Payload Analyzed:** \`${trimmed}\`
-
-**Execution Mechanics:**
-\`\`\`sql
--- Attacker Chains Query to System Catalogs:
-' UNION SELECT 1, table_name, column_name, 4 FROM information_schema.columns WHERE table_schema=database()--
-\`\`\`
-
-**Requirements for Successful Exploitation:**
-1. **Identical Column Count:** Both queries must return the same number of columns.
-2. **Compatible Data Types:** The injected columns must match or be castable to the original query's column types (e.g. integer to integer, varchar to varchar).
-
-**AegisSQL Protection:**
-Our tokenizer detects \`UNION\` combined with \`SELECT\` / \`ALL\` and terminates the request at the gateway before the database is reached.`;
-  }
-
-  // 6. Tautologies & Authentication Bypass (' OR '1'='1', admin'--)
-  if (
-    lower.includes('1=1') ||
-    lower.includes("'='") ||
-    lower.includes('or true') ||
-    lower.includes("admin'--") ||
-    lower.includes('tautology') ||
-    lower.includes('bypass')
-  ) {
-    if (role === 'blue_team') {
-      return `### 🛡️ Blue Team Defense: Preventing Authentication Bypass Tautologies
-
-**Attack Vector:** \`${trimmed}\` (Tautology / Always-True Condition)
-
-**Why It Bypasses Login:**
-\`\`\`sql
--- Vulnerable Code:
-SELECT * FROM users WHERE username = 'admin' OR '1'='1' AND password = 'xxx'
-\`\`\`
-The \`OR '1'='1'\` condition evaluates to TRUE for every single row in the database, returning the first record (usually administrator user ID 1).
-
-**Remediation:**
-\`\`\`typescript
-// Secure Authentication Pattern
-const user = await db.query(
-  'SELECT id, username, password_hash, role FROM accounts WHERE username = $1',
-  [usernameInput]
-);
-if (!user.rows.length) return false;
-
-// Verify password with secure bcrypt/argon2 hashing:
-const isValid = await bcrypt.compare(passwordInput, user.rows[0].password_hash);
-\`\`\``;
-    }
-
-    return `### ⚔️ Red Team Exploit Analysis: Tautology Authentication Bypass
-
-**Payload Analyzed:** \`${trimmed}\`
-
-**Boolean Logic Manipulation:**
-Tautology injections inject an expression that evaluates to TRUE regardless of database state:
-- \`' OR '1'='1\`
-- \`' OR 1=1--\`
-- \`admin'--\` (Comment out password check entirely)
-- \`' OR 'x'='x'\`
-
-**Operator Precedence Gotchas:**
-Because \`AND\` has higher precedence than \`OR\`, \`username = '' OR 1=1 AND password = ''\` evaluates as \`username = '' OR (1=1 AND password = '')\`. Attackers use parenthesis \`' OR (1=1)--\` to guarantee short-circuit evaluation.`;
-  }
-
-  // 7. Questions about the Agent / How AegisSQL Works / Training Center
-  if (
-    lower.includes('train') ||
-    lower.includes('how it works') ||
-    lower.includes('how does') ||
-    lower.includes('learning') ||
-    lower.includes('agent') ||
-    lower.includes('cve') ||
-    lower.includes('honeypot')
-  ) {
-    return `### 🛡️ AegisSQL Sentinel: Autonomous Training & Detection Architecture
-
-**Your Question:** How does AegisSQL Sentinel detect threats and train daily?
-
-**Three Core Pillars of the Platform:**
-
-1. **Autonomous 24-Hour Retraining Pipeline:**
-   - Every 24 hours (00:00 UTC), our background scheduler ingests fresh threat telemetry from OWASP Honeypot clusters, NVD CVE feeds, and GitHub security advisories.
-   - New injection variations (such as \`ORDER BY\` enumeration and blind substring extractions) are compiled into AST heuristic weights.
-   - The updated model is benchmarked against a verified test suite before hot-reloading into the live gateway.
-
-2. **Abstract Syntax Tree (AST) Tokenization:**
-   - Rather than relying on fragile regex filters that can be bypassed by comments (\`/**/\`) or hex encoding, AegisSQL strips whitespace and comments to tokenize the query into its structural AST.
-   - Suspicious tokens like \`UNION\`, \`SLEEP\`, \`@@version\`, and \`ORDER BY <int>\` are evaluated semantically.
-
-3. **Active Multi-Turn Gemini Integration:**
-   - Supports \`gemini-3.8-flash\` (balanced general tasks), \`gemini-3.1-flash-lite\` (ultra-fast checks), and \`gemini-4-argon\` (deep exploit reasoning).
-   - Allows role-switching between Red Team Exploit Architect and Blue Team Defensive Specialist!`;
-  }
-
-  // 8. Error-Based SQL Injection
-  if (lower.includes('error') || lower.includes('extractvalue') || lower.includes('updatexml')) {
-    return `### ⚔️ Red Team & Blue Team Analysis: Error-Based SQL Injection
-
-**Mechanics of Error-Based Attacks:**
-When database errors are displayed to the user, attackers deliberately trigger conversion or XML parsing errors that concatenate secret data into the error text:
-
-\`\`\`sql
--- MySQL EXTRACTVALUE Error Leak:
-' AND EXTRACTVALUE(1, CONCAT(0x7e, (SELECT password FROM users LIMIT 1), 0x7e))--
--- Output: XPATH syntax error: '~5f4dcc3b5aa765d61d8327deb882cf99~'
-\`\`\`
-
-**Blue Team Defense:**
-1. Configure \`display_errors = Off\` in production application servers.
-2. Catch all database exceptions and return generic error IDs to the client.
-3. Bind all user inputs with prepared statements.`;
-  }
-
-  // 9. General Greetings or Inquiries
-  if (
-    lower === 'hello' ||
-    lower === 'hi' ||
-    lower === 'hey' ||
-    lower.includes('who are you') ||
-    lower.includes('what can you do') ||
-    lower.includes('help')
-  ) {
-    const roleConfig = {
-      red_team: 'Red Team Offensive Security Architect',
-      blue_team: 'Blue Team Cyber Defense & Secure Coding Architect',
-      fast_auditor: 'Rapid SQL Syntax & Threat Auditor',
-    }[role];
-
-    return `### 🛡️ Aegis-SQL Security Assistant Active
-Hello! I am operating under the **${roleConfig}** persona using **${model}**.
-
-**I can assist you with:**
-1. **Exploit Deconstruction:** Ask me how specific SQLi vectors work (e.g. \`ORDER BY 1\`, \`UNION SELECT\`, \`SLEEP(5)\`, blind substrings).
-2. **Secure Code Remediation:** Provide your query or code snippet to receive production-ready prepared statements (Node.js pg/mysql2, Python asyncpg, Java).
-3. **Network & Port Recon:** Ask about any IP address, port numbers (e.g. 3306, 5432, 80), or Nmap scanning techniques.
-4. **Agent Internals:** Learn how AegisSQL trains autonomously on real-world threat feeds.
-
-What would you like to investigate today?`;
-  }
-
-  // 10. General / Custom Query Dynamic Breakdown
-  const isSuspicious =
-    lower.includes('select') ||
-    lower.includes('insert') ||
-    lower.includes('update') ||
-    lower.includes('delete') ||
-    lower.includes('drop') ||
-    lower.includes('alter') ||
-    lower.includes('--') ||
-    lower.includes('/*') ||
-    lower.includes("'") ||
-    lower.includes('"');
+function buildSystemInstruction(role: ChatRole, liveContext: string): string {
+  let personaGuidance = '';
 
   if (role === 'blue_team') {
-    return `### 🛡️ Blue Team Technical Advisory: "${trimmed.slice(0, 45)}..."
-
-**User Query Under Review:**
-> \`${trimmed}\`
-
-**Security Architecture Assessment:**
-${isSuspicious ? '⚠️ **Notice:** This input contains database command or syntactic tokens. If handled via direct string concatenation, it presents a CWE-89 injection risk.' : '✅ **Notice:** This input appears to be standard textual inquiry or benign parameter data.'}
-
-**Defense-in-Depth Best Practices:**
-1. **Always Use Bound Parameters:**
-   \`\`\`typescript
-   // Example parameterization in Node.js
-   const result = await db.query('SELECT * FROM resources WHERE query = $1', [input]);
-   \`\`\`
-2. **Apply Principle of Least Privilege:**
-   Ensure database user accounts only have \`SELECT\` / \`INSERT\` grants for required tables.
-3. **Audit Suspicious Characters:**
-   Strip or reject unexpected quote characters (\`'\`, \`"\`), hyphens (\`--\`), and semicolons (\`;\`).
-
-Feel free to ask for specific code examples in your programming language or framework!`;
+    personaGuidance = `You are Aegis-Blue Guardian, the defensive cybersecurity and secure coding specialist for **AegisSQL Sentinel**.
+Focus on:
+- Defensive analysis, root-cause explanations, and production-ready remediation code (parameterized queries / prepared statements in Node.js pg/mysql2, Python psycopg/asyncpg, Java JDBC, Go database/sql, ORMs).
+- Database hardening (principle of least privilege, statement timeouts, disabling verbose DB errors, strict allowlists for dynamic ORDER BY columns).
+- Analyzing intercepted login incidents, workbench payloads, port scanner results, and OWASP Top 10 / CWE-89 risks.`;
+  } else if (role === 'fast_auditor') {
+    personaGuidance = `You are Aegis-Quick Auditor, a concise high-speed SQL syntax and security auditor for **AegisSQL Sentinel**.
+Focus on:
+- Crisp, structured bullet points: Threat Classification, Flagged Tokens/Mechanisms, Impact, and Concrete 1-line/short Secure Code Fix.
+- High technical precision with zero fluff.`;
+  } else {
+    personaGuidance = `You are Aegis-Red Sentinel, an authorized defensive cybersecurity educator and SQL injection analyst for **AegisSQL Sentinel**.
+Focus on:
+- Explaining conceptually and technically how SQL injection vulnerabilities work (Boolean-based, UNION-based, Error-based, Time-based blind, Stacked queries, Comment syntax, Encoding patterns) strictly for defensive understanding, code auditing, and vulnerability remediation.
+- Pairing every vulnerability analysis with how AegisSQL's AST/lexical rules detect it and how developers prevent it using parameterized queries / prepared statements.`;
   }
 
-  if (role === 'fast_auditor') {
-    return `### ⚡ Rapid Audit: "${trimmed.slice(0, 40)}..."
-- **Input Evaluated:** \`${trimmed}\`
-- **Threat Level:** ${isSuspicious ? '🚨 CAUTION / SUSPICIOUS TOKENS' : '✅ LOW RISK / INFORMATIONAL'}
-- **Syntactic Check:** ${isSuspicious ? 'Contains SQL syntax or boundary characters' : 'Clean text string'}
-- **Action:** ${isSuspicious ? 'Verify parameter binding before execution.' : 'No immediate threat detected.'}`;
-  }
+  return `${personaGuidance}
 
-  // Red Team default custom answer
-  return `### ⚔️ Red Team Exploit & Architecture Advisory: "${trimmed.slice(0, 45)}..."
+CRITICAL RULES FOR ACCURACY, GROUNDING & CYBERSECURITY SAFETY:
+1. Respond directly and specifically to the user's actual question while maintaining full conversational context across previous messages.
+2. When the user asks about intercepted incidents, why a login request was blocked, port scan results, workbench payloads, threat feeds, active rules, or model retraining metrics, inspect the LIVE AEGISSQL SENTINEL SYSTEM TELEMETRY provided below and reference the exact real records (IDs, timestamps, IPs, payloads, rules, CVEs, or ports).
+3. NEVER invent, fabricate, or hallucinate CVEs, incident logs, port scan results, or security events. If no port scan or no matching incident exists in the telemetry, explicitly state that none has been recorded yet.
+4. Distinguish clearly between confirmed findings (e.g., detected rules/blocked payloads in logs) and potential/hypothetical risks.
+5. Prioritize defensive cybersecurity and authorized lab testing only. Do not provide actionable malware or instructions for attacking unauthorized external systems.
+6. Format code examples in clean fenced markdown code blocks (\`\`\`sql, \`\`\`typescript, \`\`\`python, etc.) and keep explanations clear, technical, and non-repetitive.
+7. Never reveal or repeat raw API keys, environment variables, or passwords.
 
-**Analysis of Your Inquiry:**
-> \`${trimmed}\`
-
-**Technical Threat Context:**
-${
-  isSuspicious
-    ? `The provided input contains potential SQL execution tokens. In penetration testing, security analysts evaluate how backend database drivers parse these tokens across different database engines (MySQL, PostgreSQL, Microsoft SQL Server, Oracle).`
-    : `You asked about **${trimmed}**. In modern web security, database defense requires continuous inspection of input boundaries and strict isolation between executable SQL instructions and user-supplied data strings.`
+${liveContext}`;
 }
 
-**Exploit & Defense Vectors to Keep in Mind:**
-- **Lexical Tokenization:** Attackers manipulate whitespace, comment delimiters (\`/**/\`), and encoding (\`%27\`) to evade simple pattern matching.
-- **AST Parsing:** AegisSQL inspects queries at the Abstract Syntax Tree layer to neutralize evasion tricks.
-- **Interactive Testing:** You can test this exact input in the **Payload Injector Workbench** tab to observe our detection agent in real-time!`;
+function extractCleanProviderMessage(raw: string): string {
+  const redacted = raw
+    .replace(/AIza[0-9A-Za-z_-]{10,}/g, '[REDACTED_KEY]')
+    .replace(/AQ\.[0-9A-Za-z._-]{15,}/g, '[REDACTED_KEY]')
+    .trim();
+  try {
+    const parsed = JSON.parse(redacted);
+    if (parsed?.error?.message) {
+      return String(parsed.error.message);
+    }
+  } catch {
+    // Not pure JSON; try extracting nested JSON "message":"..."
+    const m = redacted.match(/"message"\s*:\s*"([^"]+)"/);
+    if (m && m[1]) {
+      return m[1];
+    }
+  }
+  return redacted.slice(0, 180);
+}
+
+function classifyGeminiError(err: unknown): SecurityAiError {
+  if (err instanceof SecurityAiError) {
+    return err;
+  }
+
+  const anyErr = err as { status?: number; code?: string | number; message?: string; name?: string };
+  const status = typeof anyErr?.status === 'number' ? anyErr.status : 0;
+  const rawMsg = String(anyErr?.message || err || 'Unknown Gemini API error');
+  const cleanMsg = extractCleanProviderMessage(rawMsg);
+  const lower = `${rawMsg} ${cleanMsg}`.toLowerCase();
+
+  if (lower.includes('api_key_invalid') || lower.includes('api key not valid') || status === 401) {
+    return new SecurityAiError(
+      `The configured Gemini API key is invalid or unauthorized (${cleanMsg}). Please verify GEMINI_API_KEY in Settings > Secrets.`,
+      401,
+      'INVALID_API_KEY'
+    );
+  }
+
+  if (status === 403 || lower.includes('permission_denied')) {
+    return new SecurityAiError(
+      `Permission denied by Gemini API (${cleanMsg}). Please check your API key permissions in Settings > Secrets.`,
+      403,
+      'INVALID_API_KEY'
+    );
+  }
+
+  if (status === 429 || lower.includes('resource_exhausted') || lower.includes('quota')) {
+    return new SecurityAiError(
+      'Gemini API rate limit or quota exceeded. Please wait briefly or check your billing tier in Settings > Secrets.',
+      429,
+      'QUOTA_EXCEEDED'
+    );
+  }
+
+  if (status === 404 || lower.includes('not_found') || lower.includes('is not found')) {
+    return new SecurityAiError(
+      'The requested Gemini model is unavailable or unsupported. Please switch between Gemini 4 Hydrogen and Gemini 3.1 Flash-Lite.',
+      404,
+      'MODEL_UNAVAILABLE'
+    );
+  }
+
+  if (anyErr?.name === 'AbortError' || lower.includes('timeout') || lower.includes('timed out')) {
+    return new SecurityAiError(
+      'The Gemini AI request timed out while waiting for a response. Please try again.',
+      504,
+      'TIMEOUT'
+    );
+  }
+
+  if (
+    lower.includes('fetch failed') ||
+    lower.includes('econnrefused') ||
+    lower.includes('enotfound') ||
+    lower.includes('network')
+  ) {
+    return new SecurityAiError(
+      'Unable to reach the Gemini API due to a network connectivity failure. Please verify internet access and retry.',
+      502,
+      'NETWORK_ERROR'
+    );
+  }
+
+  if (status >= 500 && status < 600) {
+    return new SecurityAiError(
+      'Gemini API service is temporarily experiencing an internal error. Please retry shortly.',
+      503,
+      'MODEL_UNAVAILABLE'
+    );
+  }
+
+  return new SecurityAiError(
+    `Gemini AI processing failed: ${cleanMsg}`,
+    502,
+    'UNKNOWN_ERROR'
+  );
+}
+
+async function callGeminiWithTimeout(
+  ai: GoogleGenAI,
+  model: SupportedGeminiModel,
+  contents: Array<{ role: 'user' | 'model'; parts: Array<{ text: string }> }>,
+  systemInstruction: string,
+  role: ChatRole,
+  timeoutMs = 22000
+): Promise<string> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const config: Record<string, unknown> = {
+      systemInstruction,
+      abortSignal: controller.signal,
+    };
+
+    if (model === 'gemini-4-hydrogen') {
+      config.thinkingConfig = {
+        thinkingLevel: role === 'fast_auditor' ? ThinkingLevel.LOW : ThinkingLevel.MEDIUM,
+      };
+    } else if (model === 'gemini-3.1-flash-lite') {
+      config.thinkingConfig = {
+        thinkingLevel: ThinkingLevel.MINIMAL,
+      };
+    }
+
+    const response: GenerateContentResponse = await ai.models.generateContent({
+      model,
+      contents,
+      config,
+    });
+
+    const text = response.text?.trim() ?? '';
+    if (!text) {
+      const blockReason = response.promptFeedback?.blockReason;
+      throw new SecurityAiError(
+        blockReason
+          ? `Model could not complete this request (reason: ${blockReason}). Retrying or rephrasing may help.`
+          : 'Gemini returned an empty response. Please rephrase your question or retry.',
+        502,
+        'EMPTY_RESPONSE'
+      );
+    }
+
+    return text;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export interface GeminiChatResult {
+  reply: string;
+  modelUsed: SupportedGeminiModel;
+  role: ChatRole;
+  contextSummary: {
+    incidentsCount: number;
+    threatFeedsCount: number;
+    activeRulesCount: number;
+    portScansCount: number;
+    workbenchInspectionsCount: number;
+  };
+}
+
+/**
+ * Generates a real, multi-turn, context-aware Gemini AI response grounded in live AegisSQL Sentinel telemetry.
+ * Includes timeout protection, exponential backoff retries on transient errors, and transparent error propagation.
+ */
+export async function generateGeminiSecurityReply(
+  messages: IncomingChatMessage[],
+  requestedModel: string = 'gemini-4-hydrogen',
+  role: ChatRole = 'red_team',
+  hint?: ChatContextHint
+): Promise<GeminiChatResult> {
+  const ai = getGeminiClient();
+
+  const primaryModel: SupportedGeminiModel = SUPPORTED_CHAT_MODELS.includes(
+    requestedModel as SupportedGeminiModel
+  )
+    ? (requestedModel as SupportedGeminiModel)
+    : 'gemini-4-hydrogen';
+
+  const fallbackModel: SupportedGeminiModel =
+    primaryModel === 'gemini-4-hydrogen' ? 'gemini-3.1-flash-lite' : 'gemini-4-hydrogen';
+
+  // Keep up to the most recent 20 messages for clean multi-turn memory
+  const recentMessages = messages.slice(-20);
+
+  // Ensure Gemini contents sequence is valid (starts with user role or only valid alternating/non-empty turns)
+  const formattedContents: Array<{ role: 'user' | 'model'; parts: Array<{ text: string }> }> = [];
+  for (const m of recentMessages) {
+    const cleanText = m.content.trim();
+    if (!cleanText) continue;
+    const msgRole = m.role === 'model' ? 'model' : 'user';
+    // Skip leading model welcome message if first in array so conversation starts cleanly with user turn
+    if (formattedContents.length === 0 && msgRole === 'model') {
+      continue;
+    }
+    formattedContents.push({
+      role: msgRole,
+      parts: [{ text: cleanText }],
+    });
+  }
+
+  if (formattedContents.length === 0 || formattedContents[formattedContents.length - 1].role !== 'user') {
+    throw new SecurityAiError(
+      'Please enter a non-empty question for the Security AI assistant.',
+      400,
+      'VALIDATION_ERROR'
+    );
+  }
+
+  const liveContext = buildLiveSystemContext(hint);
+  const systemInstruction = buildSystemInstruction(role, liveContext);
+
+  const contextSummary = {
+    incidentsCount: db.getIncidentLogs().length,
+    threatFeedsCount: db.getThreatFeeds().length,
+    activeRulesCount: sqliteDb.getActiveRules().length,
+    portScansCount: db.getRecentPortScans().length,
+    workbenchInspectionsCount: db.getRecentWorkbenchInspections().length,
+  };
+
+  // Attempt primary model with 1 retry for transient 5xx/timeout/network failures
+  const maxPrimaryAttempts = 2;
+  let lastError: SecurityAiError | null = null;
+
+  for (let attempt = 1; attempt <= maxPrimaryAttempts; attempt++) {
+    try {
+      const reply = await callGeminiWithTimeout(
+        ai,
+        primaryModel,
+        formattedContents,
+        systemInstruction,
+        role,
+        22000
+      );
+      return {
+        reply,
+        modelUsed: primaryModel,
+        role,
+        contextSummary,
+      };
+    } catch (err) {
+      const classified = classifyGeminiError(err);
+      lastError = classified;
+
+      // Do not retry on invalid API key or validation errors
+      if (classified.code === 'INVALID_API_KEY' || classified.code === 'MISSING_API_KEY' || classified.code === 'VALIDATION_ERROR') {
+        throw classified;
+      }
+
+      // Exponential backoff before retry on transient errors
+      if (attempt < maxPrimaryAttempts && (classified.code === 'NETWORK_ERROR' || classified.code === 'TIMEOUT' || classified.statusCode >= 500)) {
+        await new Promise((r) => setTimeout(r, 800 * attempt));
+        continue;
+      }
+      break;
+    }
+  }
+
+  // Automatic failover to secondary supported Gemini model if primary hit quota/unavailable/timeout/empty
+  if (
+    lastError &&
+    (lastError.code === 'QUOTA_EXCEEDED' ||
+      lastError.code === 'MODEL_UNAVAILABLE' ||
+      lastError.code === 'TIMEOUT' ||
+      lastError.code === 'EMPTY_RESPONSE')
+  ) {
+    try {
+      const reply = await callGeminiWithTimeout(
+        ai,
+        fallbackModel,
+        formattedContents,
+        systemInstruction,
+        role,
+        22000
+      );
+      return {
+        reply,
+        modelUsed: fallbackModel,
+        role,
+        contextSummary,
+      };
+    } catch (fallbackErr) {
+      throw classifyGeminiError(fallbackErr);
+    }
+  }
+
+  throw lastError || new SecurityAiError('Unable to obtain a response from Gemini AI.', 502, 'UNKNOWN_ERROR');
 }
